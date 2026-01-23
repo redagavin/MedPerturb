@@ -185,6 +185,8 @@ if __name__ == "__main__":
     parser.add_argument('--output', type=str, required=True, help='Output JSON path')
     parser.add_argument('--model', type=str, default='meta-llama/Llama-3.1-8B-Instruct',
                         help='Model for tokenizer')
+    parser.add_argument('--sample_size', type=int, default=None,
+                        help='Limit number of samples (for testing)')
 
     args = parser.parse_args()
 
@@ -194,7 +196,12 @@ if __name__ == "__main__":
     print(f"Loading dataset: {args.dataset}")
     df = load_dataset_with_perturbations(args.dataset, args.perturbations_dir)
 
-    print(f"Generating baselines...")
+    # Apply sample size limit if specified
+    if args.sample_size:
+        df = df.head(args.sample_size)
+        print(f"Limited to {len(df)} samples (test mode)")
+
+    print(f"Generating baselines for {len(df)} samples...")
     baselines = generate_all_baselines(df, tokenizer, args.output)
 
     print(f"Done! Baselines saved to: {args.output}")

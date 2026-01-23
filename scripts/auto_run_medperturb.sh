@@ -4,18 +4,55 @@
 
 set -e
 
+# Parse arguments
+TEST_MODE=false
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --test)
+            TEST_MODE=true
+            shift
+            ;;
+        *)
+            MODEL_ARG="$1"
+            shift
+            ;;
+    esac
+done
+
 # Configuration
 MEDPERTURB_DIR="/scratch/yang.zih/cot_faithfulness/MedPerturb"
 DATASET="${MEDPERTURB_DIR}/data.csv"
 PERTURBATIONS_DIR="${MEDPERTURB_DIR}/results/perturbations"
 BASELINES_FILE="${MEDPERTURB_DIR}/results/baselines.json"
 CHECKPOINT_DIR="${MEDPERTURB_DIR}/checkpoints"
-MODEL=${1:-"meta-llama/Llama-3.1-70B-Instruct"}
-MODEL_SHORT=$(echo $MODEL | sed 's/.*\///' | tr '[:upper:]' '[:lower:]' | tr '-' '_')
-TOTAL_GPUS=4
 SBATCH_SCRIPT="${MEDPERTURB_DIR}/slurm/run_evaluation.sbatch"
 JOB_NAME="medperturb_eval"
 CHECK_INTERVAL=300  # Check every 5 minutes
+
+# Test mode settings
+if [ "$TEST_MODE" = true ]; then
+    MODEL=${MODEL_ARG:-"meta-llama/Llama-3.1-8B-Instruct"}
+    SAMPLE_SIZE=2
+    TOTAL_GPUS=1
+    PARTITION="177huntington"
+    GPU_TYPE="a100"
+    echo "=========================================="
+    echo "TEST MODE ENABLED"
+    echo "=========================================="
+    echo "  Model: ${MODEL} (8B for testing)"
+    echo "  Sample size: ${SAMPLE_SIZE}"
+    echo "  Partition: ${PARTITION}"
+    echo "  GPU: ${GPU_TYPE}"
+    echo ""
+else
+    MODEL=${MODEL_ARG:-"meta-llama/Llama-3.1-70B-Instruct"}
+    SAMPLE_SIZE=""
+    TOTAL_GPUS=4
+    PARTITION="gpu"
+    GPU_TYPE="h200"
+fi
+
+MODEL_SHORT=$(echo $MODEL | sed 's/.*\///' | tr '[:upper:]' '[:lower:]' | tr '-' '_')
 
 # Perturbation types
 PERTURBATION_TYPES=("gender:swap" "gender:remove" "stylistic:uncertain" "stylistic:colorful")
@@ -69,6 +106,12 @@ from perturb_data import ClinicalContextPerturber
 # Load dataset
 df = pd.read_csv('${DATASET}')
 print(f"  Loaded {len(df)} samples")
+
+# Limit samples in test mode
+sample_size = ${SAMPLE_SIZE:-0}
+if sample_size > 0:
+    df = df.head(sample_size)
+    print(f"  Limited to {len(df)} samples (test mode)")
 
 # Initialize perturber
 perturber = ClinicalContextPerturber()
@@ -125,30 +168,31 @@ echo "=========================================="
 echo "STEP 2: Generating Calibrated Baselines"
 echo "=========================================="
 
+BASELINE_ARGS="--dataset ${DATASET} --perturbations_dir ${PERTURBATIONS_DIR} --output ${BASELINES_FILE} --model ${MODEL}"
+if [ -n "$SAMPLE_SIZE" ]; then
+    BASELINE_ARGS="${BASELINE_ARGS} --sample_size ${SAMPLE_SIZE}"
+fi
+
 if [ -f "${BASELINES_FILE}" ]; then
     echo "Baselines file exists: ${BASELINES_FILE}"
     echo "Checking if complete..."
 
     BASELINE_COUNT=$(python3 -c "import json; d=json.load(open('${BASELINES_FILE}')); print(len(d))")
-    DATASET_COUNT=$(python3 -c "import pandas as pd; print(len(pd.read_csv('${DATASET}')))")
+    if [ -n "$SAMPLE_SIZE" ]; then
+        DATASET_COUNT=$SAMPLE_SIZE
+    else
+        DATASET_COUNT=$(python3 -c "import pandas as pd; print(len(pd.read_csv('${DATASET}')))")
+    fi
 
     if [ "$BASELINE_COUNT" -ge "$DATASET_COUNT" ]; then
         echo "Baselines complete (${BASELINE_COUNT}/${DATASET_COUNT})"
     else
         echo "Baselines incomplete (${BASELINE_COUNT}/${DATASET_COUNT}), resuming..."
-        python3 ${MEDPERTURB_DIR}/code/generate_baselines.py \
-            --dataset "${DATASET}" \
-            --perturbations_dir "${PERTURBATIONS_DIR}" \
-            --output "${BASELINES_FILE}" \
-            --model "${MODEL}"
+        python3 ${MEDPERTURB_DIR}/code/generate_baselines.py ${BASELINE_ARGS}
     fi
 else
     echo "Generating calibrated baselines..."
-    python3 ${MEDPERTURB_DIR}/code/generate_baselines.py \
-        --dataset "${DATASET}" \
-        --perturbations_dir "${PERTURBATIONS_DIR}" \
-        --output "${BASELINES_FILE}" \
-        --model "${MODEL}"
+    python3 ${MEDPERTURB_DIR}/code/generate_baselines.py ${BASELINE_ARGS}
 fi
 
 echo ""
@@ -156,11 +200,38 @@ echo "Baseline generation complete!"
 echo ""
 
 # ==========================================
-# STEP 3: Run Model Evaluation (with auto-relaunch)
+# STEP 3: Run Model Evaluation
 # ==========================================
 echo "=========================================="
 echo "STEP 3: Running Model Evaluation"
 echo "=========================================="
+
+if [ "$TEST_MODE" = true ]; then
+    # Test mode: Use srun for interactive testing
+    echo "Running evaluation with srun (test mode)..."
+
+    EVAL_ARGS="--model ${MODEL} --dataset data.csv --perturbations_dir results/perturbations --baselines results/baselines.json --output results/evaluation_test.json --checkpoint_dir checkpoints --checkpoint_freq 1 --gpu_id 0 --total_gpus 1 --sample_size ${SAMPLE_SIZE}"
+
+    cd ${MEDPERTURB_DIR}
+
+    srun --partition=${PARTITION} \
+         --gres=gpu:${GPU_TYPE}:1 \
+         --cpus-per-task=8 \
+         --mem=80G \
+         --time=1:00:00 \
+         python code/batch_evaluate.py ${EVAL_ARGS}
+
+    echo ""
+    echo "=========================================="
+    echo "TEST MODE Complete!"
+    echo "=========================================="
+    echo "Results: ${MEDPERTURB_DIR}/results/evaluation_test.json"
+    echo "Completed at: $(date)"
+    echo "=========================================="
+    exit 0
+fi
+
+# Production mode: Use sbatch with auto-relaunch
 
 # Function to check if evaluation is complete
 check_completion() {

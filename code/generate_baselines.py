@@ -103,7 +103,7 @@ def load_dataset_with_perturbations(dataset_path, perturbations_dir):
             with open(pfile, 'r') as f:
                 perturbations = json.load(f)
             df[f'{ptype}_text'] = df['context_id'].map(
-                lambda cid: perturbations.get(str(cid), {}).get('perturbed_text', '')
+                lambda cid: perturbations.get(str(cid), {}).get('perturbed', '')
             )
         except FileNotFoundError:
             print(f"Warning: {pfile} not found, skipping {ptype}")

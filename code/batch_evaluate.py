@@ -38,7 +38,7 @@ def load_all_data(dataset_path, perturbations_dir, baselines_path):
             with open(pfile, 'r') as f:
                 perturbations = json.load(f)
             df[f'{ptype}_perturbed'] = df['context_id'].apply(
-                lambda cid: perturbations.get(str(cid), {}).get('perturbed_text', '')
+                lambda cid: perturbations.get(str(cid), {}).get('perturbed', '')
             )
             print(f"  Loaded {ptype} perturbations")
         else:

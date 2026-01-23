@@ -95,60 +95,105 @@ generate_perturbations() {
 
     echo "  Generating ${ptype}:${variant}..."
 
-    # Create Python script for batch perturbation
-    python3 << EOF
+    # Create temporary Python script on shared filesystem (follows perturb_data.py main() pattern)
+    local tmp_script="${MEDPERTURB_DIR}/tmp_perturb_${ptype}_${variant}.py"
+    cat > "${tmp_script}" << 'PYTHON_EOF'
 import pandas as pd
 import json
 import sys
-sys.path.insert(0, '${MEDPERTURB_DIR}/code')
+import os
+
+medperturb_dir = os.environ.get('MEDPERTURB_DIR')
+sys.path.insert(0, f'{medperturb_dir}/code')
 from perturb_data import ClinicalContextPerturber
+from utils import setup_logging
+
+logger = setup_logging()
+
+# Get parameters from environment
+dataset_path = os.environ.get('DATASET')
+output_file = os.environ.get('OUTPUT_FILE')
+model_name = os.environ.get('MODEL')
+ptype = os.environ.get('PTYPE')
+variant = os.environ.get('VARIANT')
+sample_size = int(os.environ.get('SAMPLE_SIZE', 0))
 
 # Load dataset
-df = pd.read_csv('${DATASET}')
-print(f"  Loaded {len(df)} samples")
+df = pd.read_csv(dataset_path)
+logger.info(f"Loaded {len(df)} samples")
 
 # Limit samples in test mode
-sample_size = ${SAMPLE_SIZE:-0}
 if sample_size > 0:
     df = df.head(sample_size)
-    print(f"  Limited to {len(df)} samples (test mode)")
+    logger.info(f"Limited to {len(df)} samples (test mode)")
 
-# Initialize perturber
-perturber = ClinicalContextPerturber()
+# Initialize perturber (follows perturb_data.py ClinicalContextPerturber init)
+perturber = ClinicalContextPerturber(model_name=model_name)
 
 # Generate perturbations
 results = {}
 for idx, row in df.iterrows():
     if idx % 10 == 0:
-        print(f"  Processing {idx}/{len(df)}...")
+        logger.info(f"Processing {idx}/{len(df)}...")
 
     context_id = str(row['context_id'])
     original = row['clinical_context']
 
     try:
+        # Call perturb_context same as perturb_data.py main()
         perturbed = perturber.perturb_context(
             text=original,
             dataset_type='askadocs',
-            perturbation_type='${ptype}',
-            variant='${variant}'
+            perturbation_type=ptype,
+            variant=variant
         )
+        # Output format follows perturb_data.py save format
         results[context_id] = {
             'original': original,
-            'perturbed_text': perturbed
+            'perturbed': perturbed,
+            'dataset': 'askadocs',
+            'perturbation_type': ptype,
+            'variant': variant
         }
     except Exception as e:
-        print(f"  Warning: Failed for {context_id}: {e}")
+        logger.error(f"Failed for {context_id}: {e}")
         results[context_id] = {
             'original': original,
-            'perturbed_text': original  # Fallback to original
+            'perturbed': original,
+            'dataset': 'askadocs',
+            'perturbation_type': ptype,
+            'variant': variant
         }
 
 # Save results
-with open('${output_file}', 'w') as f:
+with open(output_file, 'w') as f:
     json.dump(results, f, indent=2)
 
-print(f"  Saved {len(results)} perturbations to ${output_file}")
-EOF
+logger.info(f"Saved {len(results)} perturbations to {output_file}")
+PYTHON_EOF
+
+    # Export environment variables for the script
+    export MEDPERTURB_DIR="${MEDPERTURB_DIR}"
+    export DATASET="${DATASET}"
+    export OUTPUT_FILE="${output_file}"
+    export MODEL="${MODEL}"
+    export PTYPE="${ptype}"
+    export VARIANT="${variant}"
+    export SAMPLE_SIZE="${SAMPLE_SIZE:-0}"
+
+    # Run via srun in test mode (needs GPU), directly otherwise
+    if [ "$TEST_MODE" = true ]; then
+        srun --partition=${PARTITION} \
+             --gres=gpu:${GPU_TYPE}:1 \
+             --cpus-per-task=8 \
+             --mem=80G \
+             --time=1:00:00 \
+             bash -c "source ~/.bashrc && conda activate cot && python ${tmp_script}"
+    else
+        python3 "${tmp_script}"
+    fi
+
+    rm -f "${tmp_script}"
 }
 
 # Generate all perturbation types
@@ -219,7 +264,7 @@ if [ "$TEST_MODE" = true ]; then
          --cpus-per-task=8 \
          --mem=80G \
          --time=1:00:00 \
-         python code/batch_evaluate.py ${EVAL_ARGS}
+         bash -c "source ~/.bashrc && conda activate cot && python code/batch_evaluate.py ${EVAL_ARGS}"
 
     echo ""
     echo "=========================================="

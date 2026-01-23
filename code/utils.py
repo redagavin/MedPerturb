@@ -4,11 +4,26 @@ from dotenv import load_dotenv
 
 def load_hf_token() -> Optional[str]:
     """
-    Load HuggingFace token from environment variables or .env file.
+    Load HuggingFace token from environment variables, .env file, or HF cache.
     Returns None if token is not found.
     """
     load_dotenv()  # Load environment variables from .env file
-    return os.getenv("HUGGINGFACE_TOKEN")
+
+    # Check environment variable first
+    token = os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN")
+    if token and token != "your_token_here":
+        return token
+
+    # Fall back to HuggingFace CLI cached token
+    try:
+        from huggingface_hub import HfFolder
+        token = HfFolder.get_token()
+        if token:
+            return token
+    except ImportError:
+        pass
+
+    return None
 
 def load_openai_token() -> Optional[str]:
     """

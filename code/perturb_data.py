@@ -21,7 +21,7 @@ DatasetType = Literal["oncqa", "askadocs", "usmle"]
 PerturbationType = Literal["gender", "stylistic", "viewpoint"]
 
 class ClinicalContextPerturber:
-    def __init__(self, model_name: str = "meta-llama/Meta-Llama-3.1-8B-Instruct"):
+    def __init__(self, model_name: str = "meta-llama/Llama-3.1-8B-Instruct"):
         self.logger = setup_logging()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
@@ -330,7 +330,7 @@ def parse_args():
     parser.add_argument(
         "--model",
         type=str,
-        default="meta-llama/Meta-Llama-3.1-8B-Instruct",
+        default="meta-llama/Llama-3.1-8B-Instruct",
         help="The model to use for perturbation"
     )
     parser.add_argument(

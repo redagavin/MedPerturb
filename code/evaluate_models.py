@@ -4,7 +4,7 @@ import random
 import torch
 import openai
 from typing import Literal, Dict, List, Optional, Tuple
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, FineGrainedFP8Config
 from utils import (
     load_hf_token,
     load_openai_token,
@@ -37,10 +37,24 @@ class ModelEvaluator:
                 model_name,
                 token=hf_token
             )
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                token=hf_token
-            ).to(self.device)
+            # Use FP8 quantization for 70B models
+            if '70B' in model_name or '70b' in model_name:
+                print("Using FineGrainedFP8Config for 70B model...")
+                quantization_config = FineGrainedFP8Config()
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_name,
+                    torch_dtype="auto",
+                    device_map="auto",
+                    quantization_config=quantization_config,
+                    token=hf_token
+                )
+            else:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_name,
+                    torch_dtype="auto",
+                    device_map="auto",
+                    token=hf_token
+                )
             self.model_type = "huggingface"
         
         # Initialize LLaMA-3-8B for binary extraction
@@ -190,8 +204,18 @@ def main():
         type=str,
         help="Output file path to save the evaluation results (optional)"
     )
-    
+    parser.add_argument('--gpu_id', type=int, default=None, help='GPU ID for data sharding')
+    parser.add_argument('--total_gpus', type=int, default=1, help='Total GPUs in parallel job')
+
     args = parser.parse_args()
+
+    # Auto-detect SLURM array job parameters
+    if 'SLURM_ARRAY_TASK_ID' in os.environ:
+        args.gpu_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+        args.total_gpus = int(os.environ['SLURM_ARRAY_TASK_COUNT'])
+        print(f"Detected SLURM array job: GPU {args.gpu_id} of {args.total_gpus}")
+    elif args.gpu_id is None:
+        args.gpu_id = 0
     logger = setup_logging()
     
     try:

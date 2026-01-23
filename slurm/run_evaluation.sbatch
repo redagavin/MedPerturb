@@ -10,8 +10,10 @@
 #SBATCH --error=logs/medperturb_eval_%A_%a.err
 #SBATCH --signal=INT@300
 
-# ABOUTME: SLURM script for MedPerturb model evaluation
+# ABOUTME: SLURM script for MedPerturb batch evaluation
 # ABOUTME: 4 data-parallel array tasks with FP8 quantization for 70B
+
+MEDPERTURB_DIR="/scratch/yang.zih/cot_faithfulness/MedPerturb"
 
 echo "========================================"
 echo "MedPerturb Model Evaluation"
@@ -28,18 +30,23 @@ nvidia-smi
 source ~/.bashrc
 conda activate cot
 
-# Set model (change as needed)
+# Set model (passed as argument or default)
 MODEL=${1:-"meta-llama/Llama-3.1-70B-Instruct"}
 
 echo "Model: ${MODEL}"
 echo ""
 
-# Run evaluation
-python code/evaluate_models.py \
+cd ${MEDPERTURB_DIR}
+
+# Run batch evaluation
+python code/batch_evaluate.py \
     --model "${MODEL}" \
-    --dataset case_studies/dataset.csv \
-    --baselines results/baselines.json \
-    --output "results/evaluation_${SLURM_ARRAY_TASK_ID}.json"
+    --dataset "data.csv" \
+    --perturbations_dir "results/perturbations" \
+    --baselines "results/baselines.json" \
+    --output "results/evaluation_${SLURM_ARRAY_TASK_ID}.json" \
+    --checkpoint_dir "checkpoints" \
+    --checkpoint_freq 10
 
 EXIT_CODE=$?
 

@@ -10,8 +10,9 @@ import time
 import pandas as pd
 from tqdm import tqdm
 
-# Add parent directory for imports
+# Add directories for imports
 sys.path.insert(0, '/scratch/yang.zih/cot_faithfulness/src')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # MedPerturb/code
 
 from evaluate_models import ModelEvaluator
 

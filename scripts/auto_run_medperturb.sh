@@ -218,6 +218,21 @@ if [ -n "$SAMPLE_SIZE" ]; then
     BASELINE_ARGS="${BASELINE_ARGS} --sample_size ${SAMPLE_SIZE}"
 fi
 
+# Function to run baseline generation (uses srun for memory)
+run_baseline_generation() {
+    if [ "$TEST_MODE" = true ]; then
+        # Test mode: run directly (small sample size)
+        python3 ${MEDPERTURB_DIR}/code/generate_baselines.py ${BASELINE_ARGS}
+    else
+        # Production mode: use srun for more memory (no GPU needed, just CPU/memory)
+        srun --partition=177huntington \
+             --cpus-per-task=8 \
+             --mem=64G \
+             --time=8:00:00 \
+             bash -c "source ~/.bashrc && conda activate cot && python3 ${MEDPERTURB_DIR}/code/generate_baselines.py ${BASELINE_ARGS}"
+    fi
+}
+
 if [ -f "${BASELINES_FILE}" ]; then
     echo "Baselines file exists: ${BASELINES_FILE}"
     echo "Checking if complete..."
@@ -233,11 +248,11 @@ if [ -f "${BASELINES_FILE}" ]; then
         echo "Baselines complete (${BASELINE_COUNT}/${DATASET_COUNT})"
     else
         echo "Baselines incomplete (${BASELINE_COUNT}/${DATASET_COUNT}), resuming..."
-        python3 ${MEDPERTURB_DIR}/code/generate_baselines.py ${BASELINE_ARGS}
+        run_baseline_generation
     fi
 else
     echo "Generating calibrated baselines..."
-    python3 ${MEDPERTURB_DIR}/code/generate_baselines.py ${BASELINE_ARGS}
+    run_baseline_generation
 fi
 
 echo ""

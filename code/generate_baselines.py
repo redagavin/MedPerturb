@@ -102,8 +102,8 @@ def load_dataset_with_perturbations(dataset_path, perturbations_dir):
         try:
             with open(pfile, 'r') as f:
                 perturbations = json.load(f)
-            df[f'{ptype}_text'] = df['context_id'].map(
-                lambda cid: perturbations.get(str(cid), {}).get('perturbed', '')
+            df[f'{ptype}_text'] = df['Index'].map(
+                lambda idx: perturbations.get(str(idx), {}).get('perturbed', '')
             )
         except FileNotFoundError:
             print(f"Warning: {pfile} not found, skipping {ptype}")
@@ -132,9 +132,9 @@ def generate_all_baselines(df, tokenizer, output_path, openai_client=None):
     baselines = {}
 
     for idx, row in tqdm(df.iterrows(), total=len(df), desc="Generating baselines"):
-        context_id = str(row['context_id'])
+        sample_id = str(row['Index'])
         original = row['clinical_context']
-        baselines[context_id] = {}
+        baselines[sample_id] = {}
 
         for ptype in PERTURBATION_TYPES:
             perturbed = row.get(f'{ptype}_text', '')
@@ -146,7 +146,7 @@ def generate_all_baselines(df, tokenizer, output_path, openai_client=None):
 
             if target_pct < 0.5:
                 # Skip if perturbation is too small
-                baselines[context_id][ptype] = {
+                baselines[sample_id][ptype] = {
                     'paraphrase': original,
                     'target_pct': target_pct,
                     'actual_pct': 0.0,
@@ -164,7 +164,7 @@ def generate_all_baselines(df, tokenizer, output_path, openai_client=None):
                 openai_client=openai_client
             )
             result['skipped'] = False
-            baselines[context_id][ptype] = result
+            baselines[sample_id][ptype] = result
 
         # Save checkpoint every 10 samples
         if (idx + 1) % 10 == 0:

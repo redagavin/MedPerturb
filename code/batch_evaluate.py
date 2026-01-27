@@ -31,28 +31,28 @@ def load_all_data(dataset_path, perturbations_dir, baselines_path):
     df = pd.read_csv(dataset_path)
     print(f"Loaded {len(df)} samples from dataset")
 
-    # Load perturbations
+    # Load perturbations (keyed by Index, the unique row identifier)
     for ptype in PERTURBATION_TYPES:
         pfile = f"{perturbations_dir}/{ptype}.json"
         if os.path.exists(pfile):
             with open(pfile, 'r') as f:
                 perturbations = json.load(f)
-            df[f'{ptype}_perturbed'] = df['context_id'].apply(
-                lambda cid: perturbations.get(str(cid), {}).get('perturbed', '')
+            df[f'{ptype}_perturbed'] = df['Index'].apply(
+                lambda idx: perturbations.get(str(idx), {}).get('perturbed', '')
             )
             print(f"  Loaded {ptype} perturbations")
         else:
             print(f"  Warning: {pfile} not found")
             df[f'{ptype}_perturbed'] = ''
 
-    # Load baselines
+    # Load baselines (keyed by Index, the unique row identifier)
     if os.path.exists(baselines_path):
         with open(baselines_path, 'r') as f:
             baselines = json.load(f)
 
         for ptype in PERTURBATION_TYPES:
-            df[f'{ptype}_baseline'] = df['context_id'].apply(
-                lambda cid: baselines.get(str(cid), {}).get(ptype, {}).get('paraphrase', '')
+            df[f'{ptype}_baseline'] = df['Index'].apply(
+                lambda idx: baselines.get(str(idx), {}).get(ptype, {}).get('paraphrase', '')
             )
         print(f"  Loaded baselines")
     else:
@@ -107,19 +107,20 @@ def mark_gpu_completion(checkpoint_dir, model_short, gpu_id, total_gpus):
     print(f"GPU {gpu_id} marked as complete")
 
 
-def evaluate_sample(evaluator, context_id, texts_dict):
+def evaluate_sample(evaluator, sample_id, context_id, texts_dict):
     """
     Evaluate all text versions for a single sample.
 
     Args:
         evaluator: ModelEvaluator instance
-        context_id: Sample identifier
+        sample_id: Unique row identifier (Index column from CSV)
+        context_id: Patient/case identifier (not unique per row)
         texts_dict: Dict with keys 'original', '{ptype}_perturbed', '{ptype}_baseline'
 
     Returns:
         dict with evaluation results for all text versions
     """
-    result = {'context_id': context_id}
+    result = {'sample_id': sample_id, 'context_id': context_id}
 
     # Evaluate original
     if texts_dict.get('original'):
@@ -218,6 +219,7 @@ def main():
         if idx in completed_indices:
             continue
 
+        sample_id = str(row['Index'])
         context_id = str(row['context_id'])
 
         # Build texts dict
@@ -229,7 +231,7 @@ def main():
             texts_dict[f'{ptype}_baseline'] = row.get(f'{ptype}_baseline', '')
 
         # Evaluate
-        result = evaluate_sample(evaluator, context_id, texts_dict)
+        result = evaluate_sample(evaluator, sample_id, context_id, texts_dict)
         results.append(result)
         completed_indices.add(idx)
 

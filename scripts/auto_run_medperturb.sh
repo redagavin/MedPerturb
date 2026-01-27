@@ -136,7 +136,7 @@ for idx, row in df.iterrows():
     if idx % 10 == 0:
         logger.info(f"Processing {idx}/{len(df)}...")
 
-    context_id = str(row['context_id'])
+    sample_id = str(row['Index'])
     original = row['clinical_context']
 
     try:
@@ -147,8 +147,8 @@ for idx, row in df.iterrows():
             perturbation_type=ptype,
             variant=variant
         )
-        # Output format follows perturb_data.py save format
-        results[context_id] = {
+        # Output format follows perturb_data.py save format, keyed by Index (unique row ID)
+        results[sample_id] = {
             'original': original,
             'perturbed': perturbed,
             'dataset': 'askadocs',
@@ -156,8 +156,8 @@ for idx, row in df.iterrows():
             'variant': variant
         }
     except Exception as e:
-        logger.error(f"Failed for {context_id}: {e}")
-        results[context_id] = {
+        logger.error(f"Failed for sample {sample_id}: {e}")
+        results[sample_id] = {
             'original': original,
             'perturbed': original,
             'dataset': 'askadocs',
@@ -378,28 +378,37 @@ python3 << EOF
 import json
 import glob
 
-# Find all evaluation result files
+# Find production evaluation result files (exclude merged and test files)
 result_files = glob.glob('${MEDPERTURB_DIR}/results/evaluation_*.json')
-result_files = [f for f in result_files if 'merged' not in f]
+result_files = [f for f in result_files if 'merged' not in f and 'test' not in f]
 
 print(f"Found {len(result_files)} result files to merge")
 
-# Merge all results
+# Merge results, deduplicating by sample_id (unique row identifier)
+seen_ids = set()
 merged = []
+duplicate_count = 0
 for f in sorted(result_files):
     with open(f, 'r') as fp:
         data = json.load(fp)
-        if isinstance(data, list):
-            merged.extend(data)
-        else:
-            merged.append(data)
+        items = data if isinstance(data, list) else [data]
+        for item in items:
+            sid = item.get('sample_id', item.get('context_id'))
+            if sid not in seen_ids:
+                seen_ids.add(sid)
+                merged.append(item)
+            else:
+                duplicate_count += 1
+
+if duplicate_count > 0:
+    print(f"  Skipped {duplicate_count} duplicate entries")
 
 # Save merged results
 output_path = '${MEDPERTURB_DIR}/results/evaluation_merged_${MODEL_SHORT}.json'
 with open(output_path, 'w') as f:
     json.dump(merged, f, indent=2)
 
-print(f"Merged {len(merged)} results to {output_path}")
+print(f"Merged {len(merged)} unique results to {output_path}")
 EOF
 
 echo ""

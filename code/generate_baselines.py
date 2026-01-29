@@ -4,10 +4,12 @@
 import sys
 sys.path.insert(0, '/scratch/yang.zih/cot_faithfulness/src')
 
+import asyncio
 import pandas as pd
 import json
 import argparse
 from tqdm import tqdm
+from tqdm.asyncio import tqdm as atqdm
 from transformers import AutoTokenizer
 
 from token_edit_distance import levenshtein_distance
@@ -42,7 +44,45 @@ def compute_token_change_percent(original, perturbed, tokenizer=None, use_words=
     return (edit_dist / len(orig_tokens)) * 100
 
 
-from calibrated_paraphrase import generate_calibrated_paraphrase
+from calibrated_paraphrase import generate_calibrated_paraphrase, generate_calibrated_paraphrase_async
+
+
+async def generate_baseline_async(original_text, target_pct, tokenizer, openai_client=None,
+                                   max_retries=10, tolerance=0.5):
+    """
+    Async version: Generate a calibrated baseline paraphrase matching target token change.
+
+    Args:
+        original_text: Original clinical context
+        target_pct: Target token change percentage to match
+        tokenizer: HuggingFace tokenizer for the evaluation model
+        openai_client: AsyncOpenAI client (creates one if None)
+        max_retries: Maximum calibration attempts
+        tolerance: Acceptable deviation from target (±%)
+
+    Returns:
+        dict: {paraphrase, target_pct, actual_pct, deviation, retries_used}
+    """
+    if openai_client is None:
+        from openai import AsyncOpenAI
+        openai_client = AsyncOpenAI()
+
+    result = await generate_calibrated_paraphrase_async(
+        question=original_text,
+        target_pct=target_pct,
+        tokenizer=tokenizer,
+        openai_client=openai_client,
+        max_retries=max_retries,
+        tolerance=tolerance
+    )
+
+    return {
+        'paraphrase': result['paraphrase'],
+        'target_pct': target_pct,
+        'actual_pct': result['actual_pct'],
+        'deviation': result['deviation'],
+        'retries_used': result['retries_used']
+    }
 
 
 def generate_baseline(original_text, target_pct, tokenizer, openai_client=None,
@@ -178,6 +218,112 @@ def generate_all_baselines(df, tokenizer, output_path, openai_client=None):
     return baselines
 
 
+async def generate_all_baselines_async(df, tokenizer, output_path, openai_client=None,
+                                        max_concurrent=300, checkpoint_freq=10,
+                                        _api_call_fn=None):
+    """
+    Async version: Generate calibrated baselines with parallel API calls.
+
+    Args:
+        df: DataFrame with original and perturbed texts
+        tokenizer: HuggingFace tokenizer
+        output_path: Path to save results JSON
+        openai_client: AsyncOpenAI client (creates one if None)
+        max_concurrent: Maximum concurrent API requests (default 300)
+        checkpoint_freq: Save checkpoint every N completed samples (default 10)
+        _api_call_fn: Optional mock function for testing (internal use only)
+
+    Returns:
+        dict: Baselines indexed by sample_id and perturbation type
+    """
+    if openai_client is None and _api_call_fn is None:
+        from openai import AsyncOpenAI
+        openai_client = AsyncOpenAI()
+
+    baselines = {}
+    baselines_lock = asyncio.Lock()
+    semaphore = asyncio.Semaphore(max_concurrent)
+    completed_count = 0
+    completed_lock = asyncio.Lock()
+
+    # Initialize baselines dict for all samples
+    for _, row in df.iterrows():
+        sample_id = str(row['Index'])
+        baselines[sample_id] = {}
+
+    async def process_single_task(sample_id, ptype, original, perturbed):
+        """Process a single sample/perturbation combination."""
+        nonlocal completed_count
+
+        # Compute target token change %
+        target_pct = compute_token_change_percent(original, perturbed, tokenizer)
+
+        if target_pct < 0.5:
+            # Skip if perturbation is too small
+            result = {
+                'paraphrase': original,
+                'target_pct': target_pct,
+                'actual_pct': 0.0,
+                'deviation': target_pct,
+                'retries_used': 0,
+                'skipped': True
+            }
+        else:
+            async with semaphore:
+                try:
+                    if _api_call_fn is not None:
+                        # Use injected mock for testing
+                        result = await _api_call_fn(sample_id, ptype)
+                    else:
+                        # Real API call
+                        result = await generate_baseline_async(
+                            original_text=original,
+                            target_pct=target_pct,
+                            tokenizer=tokenizer,
+                            openai_client=openai_client
+                        )
+                    result['skipped'] = False
+                except Exception as e:
+                    result = {
+                        'error': str(e),
+                        'skipped': False
+                    }
+
+        async with baselines_lock:
+            baselines[sample_id][ptype] = result
+
+        # Track completion for checkpointing
+        async with completed_lock:
+            completed_count += 1
+            if completed_count % checkpoint_freq == 0:
+                async with baselines_lock:
+                    with open(output_path, 'w') as f:
+                        json.dump(baselines, f, indent=2)
+
+    # Build list of all tasks
+    tasks = []
+    for _, row in df.iterrows():
+        sample_id = str(row['Index'])
+        original = row['clinical_context']
+
+        for ptype in PERTURBATION_TYPES:
+            col_name = f'{ptype}_text'
+            perturbed = row.get(col_name, '') if col_name in row.index else ''
+            if not perturbed:
+                continue
+
+            tasks.append(process_single_task(sample_id, ptype, original, perturbed))
+
+    # Run all tasks concurrently with progress bar
+    await atqdm.gather(*tasks, desc="Generating baselines")
+
+    # Final save
+    with open(output_path, 'w') as f:
+        json.dump(baselines, f, indent=2)
+
+    return baselines
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate calibrated baselines for MedPerturb")
     parser.add_argument('--dataset', type=str, required=True, help='Path to dataset.csv')
@@ -187,6 +333,10 @@ if __name__ == "__main__":
                         help='Model for tokenizer')
     parser.add_argument('--sample_size', type=int, default=None,
                         help='Limit number of samples (for testing)')
+    parser.add_argument('--max_concurrent', type=int, default=300,
+                        help='Maximum concurrent API requests (default 300)')
+    parser.add_argument('--sync', action='store_true',
+                        help='Use synchronous (sequential) processing instead of async')
 
     args = parser.parse_args()
 
@@ -202,6 +352,14 @@ if __name__ == "__main__":
         print(f"Limited to {len(df)} samples (test mode)")
 
     print(f"Generating baselines for {len(df)} samples...")
-    baselines = generate_all_baselines(df, tokenizer, args.output)
+
+    if args.sync:
+        print("Using synchronous (sequential) processing")
+        baselines = generate_all_baselines(df, tokenizer, args.output)
+    else:
+        print(f"Using async processing with {args.max_concurrent} concurrent requests")
+        baselines = asyncio.run(generate_all_baselines_async(
+            df, tokenizer, args.output, max_concurrent=args.max_concurrent
+        ))
 
     print(f"Done! Baselines saved to: {args.output}")

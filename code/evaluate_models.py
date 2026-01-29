@@ -64,8 +64,10 @@ class ModelEvaluator:
         )
         self.extractor_model = AutoModelForCausalLM.from_pretrained(
             "meta-llama/Llama-3.1-8B-Instruct",
+            torch_dtype="auto",
+            device_map="auto",
             token=hf_token
-        ).to(self.device)
+        )
 
     def _call_model(self, prompt: str, seed: int) -> str:
         """
@@ -103,7 +105,9 @@ class ModelEvaluator:
                 do_sample=True,
                 pad_token_id=self.tokenizer.eos_token_id
             )
-            return self.tokenizer.decode(outputs[0], skip_special_tokens=True)[len(prompt):].strip()
+            return self.tokenizer.decode(
+                outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True
+            ).strip()
 
     def _extract_binary_answer(self, response: str, question_type: str) -> int:
         """
@@ -133,7 +137,9 @@ class ModelEvaluator:
             pad_token_id=self.extractor_tokenizer.eos_token_id
         )
         
-        extracted = self.extractor_tokenizer.decode(outputs[0], skip_special_tokens=True)[len(prompt):].strip()
+        extracted = self.extractor_tokenizer.decode(
+            outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True
+        ).strip()
         
         # Convert the extracted answer to binary
         try:

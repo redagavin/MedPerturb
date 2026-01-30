@@ -1,6 +1,7 @@
 # ABOUTME: Generate calibrated baselines for MedPerturb with correct data flow
 # ABOUTME: Uses dataset_id/context_id structure to link perturbations to originals
 
+import argparse
 import sys
 sys.path.insert(0, '/scratch/yang.zih/cot_faithfulness/src')
 
@@ -8,6 +9,7 @@ import asyncio
 import json
 
 import pandas as pd
+from transformers import AutoTokenizer
 from tqdm.asyncio import tqdm as atqdm
 
 from generate_baselines import compute_token_change_percent
@@ -161,3 +163,53 @@ async def generate_baselines_for_perturbations(
         json.dump(baselines, f, indent=2)
 
     return baselines
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Generate calibrated baselines for MedPerturb perturbations"
+    )
+    parser.add_argument('--dataset', type=str, default='data.csv',
+                        help='Path to dataset CSV')
+    parser.add_argument('--output', type=str, default='results/baselines_v2.json',
+                        help='Output JSON path')
+    parser.add_argument('--model', type=str, default='meta-llama/Llama-3.1-8B-Instruct',
+                        help='Model for tokenizer')
+    parser.add_argument('--max_concurrent', type=int, default=300,
+                        help='Maximum concurrent API requests')
+    parser.add_argument('--checkpoint_freq', type=int, default=10,
+                        help='Save checkpoint every N baselines')
+    parser.add_argument('--sample_size', type=int, default=None,
+                        help='Limit perturbations to process (for testing)')
+
+    args = parser.parse_args()
+
+    print(f"Loading tokenizer: {args.model}")
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
+
+    print(f"Loading dataset: {args.dataset}")
+    df = pd.read_csv(args.dataset)
+    print(f"  Total rows: {len(df)}")
+    print(f"  Originals (dataset_id=1): {len(df[df['dataset_id'] == 1])}")
+    print(f"  Perturbations (dataset_id 2-5): {len(df[df['dataset_id'].isin([2,3,4,5])])}")
+
+    # Optionally limit for testing
+    if args.sample_size:
+        # Keep all originals, limit perturbations
+        originals = df[df['dataset_id'] == 1]
+        perturbations = df[df['dataset_id'].isin([2, 3, 4, 5])].head(args.sample_size)
+        df = pd.concat([originals, perturbations])
+        print(f"  Limited to {len(perturbations)} perturbations (test mode)")
+
+    print(f"\nGenerating baselines with {args.max_concurrent} concurrent requests...")
+
+    baselines = asyncio.run(generate_baselines_for_perturbations(
+        df=df,
+        tokenizer=tokenizer,
+        output_path=args.output,
+        max_concurrent=args.max_concurrent,
+        checkpoint_freq=args.checkpoint_freq
+    ))
+
+    print(f"\nDone! Generated {len(baselines)} baselines")
+    print(f"Saved to: {args.output}")

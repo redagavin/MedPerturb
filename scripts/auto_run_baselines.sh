@@ -110,6 +110,28 @@ if [ "$TEST_MODE" = true ]; then
             --dataset data_with_baselines.csv \
             --gpu_id 0 \
             --total_gpus 1"
+
+    # Merge results into dataset (test mode runs synchronously)
+    echo "Merging evaluation results..."
+    python << EOF
+import pandas as pd
+import glob
+
+df = pd.read_csv('data_with_baselines.csv')
+checkpoint_files = glob.glob('checkpoints/baseline_eval/baseline_eval_gpu*.csv')
+print(f"Found {len(checkpoint_files)} checkpoint files")
+
+for f in checkpoint_files:
+    results = pd.read_csv(f)
+    for _, row in results.iterrows():
+        idx = df[df['Index'] == row['Index']].index[0]
+        for col in results.columns:
+            if col != 'Index':
+                df.loc[idx, col] = row[col]
+
+df.to_csv('data_with_baselines.csv', index=False)
+print(f"Merged {len(results)} baseline evaluations into data_with_baselines.csv")
+EOF
 else
     # Production: 4x H200 via sbatch
     sbatch slurm/run_baseline_eval.sbatch "${MODEL}" "data_with_baselines.csv"

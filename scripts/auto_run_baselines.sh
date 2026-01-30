@@ -4,7 +4,8 @@
 
 set -e
 
-MODEL=${1:-"meta-llama/Llama-3.1-8B-Instruct"}
+# Defaults
+MODEL="meta-llama/Llama-3.1-8B-Instruct"
 TEST_MODE=false
 
 # Parse flags
@@ -21,7 +22,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-MEDPERTURB_DIR="/scratch/yang.zih/cot_faithfulness/MedPerturb"
+# Use script's directory as base (works from worktree or main repo)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MEDPERTURB_DIR="$(dirname "${SCRIPT_DIR}")"
 cd "${MEDPERTURB_DIR}"
 
 echo "======================================"

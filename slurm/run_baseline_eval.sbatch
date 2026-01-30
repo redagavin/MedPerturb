@@ -27,7 +27,11 @@ echo ""
 # Setup
 source ~/.bashrc
 conda activate cot
-cd /scratch/yang.zih/cot_faithfulness/MedPerturb
+
+# Use script's directory as base (works from worktree or main repo)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MEDPERTURB_DIR="$(dirname "${SCRIPT_DIR}")"
+cd "${MEDPERTURB_DIR}"
 
 mkdir -p logs
 mkdir -p checkpoints/baseline_eval

@@ -59,13 +59,15 @@ class ModelEvaluator:
         
         # Initialize LLaMA-3-8B for binary extraction
         self.extractor_tokenizer = AutoTokenizer.from_pretrained(
-            "meta-llama/Meta-Llama-3.1-8B-Instruct",
+            "meta-llama/Llama-3.1-8B-Instruct",
             token=hf_token
         )
         self.extractor_model = AutoModelForCausalLM.from_pretrained(
-            "meta-llama/Meta-Llama-3.1-8B-Instruct",
+            "meta-llama/Llama-3.1-8B-Instruct",
+            torch_dtype="auto",
+            device_map="auto",
             token=hf_token
-        ).to(self.device)
+        )
 
     def _call_model(self, prompt: str, seed: int) -> str:
         """
@@ -98,12 +100,14 @@ class ModelEvaluator:
             inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
             outputs = self.model.generate(
                 **inputs,
-                max_length=512,
+                max_new_tokens=512,
                 temperature=self.temperature,
                 do_sample=True,
                 pad_token_id=self.tokenizer.eos_token_id
             )
-            return self.tokenizer.decode(outputs[0], skip_special_tokens=True)[len(prompt):].strip()
+            return self.tokenizer.decode(
+                outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True
+            ).strip()
 
     def _extract_binary_answer(self, response: str, question_type: str) -> int:
         """
@@ -127,13 +131,15 @@ class ModelEvaluator:
         inputs = self.extractor_tokenizer(prompt, return_tensors="pt").to(self.device)
         outputs = self.extractor_model.generate(
             **inputs,
-            max_length=128,
+            max_new_tokens=128,
             temperature=0.1,  # Lower temperature for more deterministic extraction
             do_sample=False,  # No sampling for deterministic extraction
             pad_token_id=self.extractor_tokenizer.eos_token_id
         )
         
-        extracted = self.extractor_tokenizer.decode(outputs[0], skip_special_tokens=True)[len(prompt):].strip()
+        extracted = self.extractor_tokenizer.decode(
+            outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True
+        ).strip()
         
         # Convert the extracted answer to binary
         try:
@@ -190,7 +196,7 @@ def main():
         "--model",
         type=str,
         required=True,
-        choices=["gpt-4", "meta-llama/Llama-3.3-70B-Instruct", "meta-llama/Meta-Llama-3.1-8B-Instruct", "Writer/Palmyra-Med-70B"],
+        choices=["gpt-4", "meta-llama/Llama-3.3-70B-Instruct", "meta-llama/Llama-3.1-8B-Instruct", "Writer/Palmyra-Med-70B"],
         help="The model to evaluate"
     )
     parser.add_argument(

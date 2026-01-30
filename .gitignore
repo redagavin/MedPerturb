@@ -1,0 +1,16 @@
+# Worktrees
+.worktrees/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Logs and results (generated)
+logs/
+results/
+
+# IDE
+.vscode/
+.idea/

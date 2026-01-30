@@ -21,7 +21,7 @@ DatasetType = Literal["oncqa", "askadocs", "usmle"]
 PerturbationType = Literal["gender", "stylistic", "viewpoint"]
 
 class ClinicalContextPerturber:
-    def __init__(self, model_name: str = "meta-llama/Meta-Llama-3.1-8B-Instruct"):
+    def __init__(self, model_name: str = "meta-llama/Llama-3.1-8B-Instruct"):
         self.logger = setup_logging()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
@@ -98,15 +98,15 @@ class ClinicalContextPerturber:
         inputs = self.tokenizer(full_prompt, return_tensors="pt").to(self.device)
         outputs = self.model.generate(
             **inputs,
-            max_length=512,
+            max_new_tokens=512,
             temperature=self.temperature,
             do_sample=True,
             pad_token_id=self.tokenizer.eos_token_id
         )
-        
-        response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-        # Extract the perturbed text from the response
-        perturbed_text = response[len(full_prompt):].strip()
+
+        perturbed_text = self.tokenizer.decode(
+            outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True
+        ).strip()
         return perturbed_text
 
     def perturb_stylistic(self, text: str, variant: Literal["uncertain", "colorful"]) -> str:
@@ -138,15 +138,15 @@ class ClinicalContextPerturber:
         inputs = self.tokenizer(full_prompt, return_tensors="pt").to(self.device)
         outputs = self.model.generate(
             **inputs,
-            max_length=512,
+            max_new_tokens=512,
             temperature=self.temperature,
             do_sample=True,
             pad_token_id=self.tokenizer.eos_token_id
         )
-        
-        response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-        # Extract the perturbed text from the response
-        perturbed_text = response[len(full_prompt):].strip()
+
+        perturbed_text = self.tokenizer.decode(
+            outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True
+        ).strip()
         return perturbed_text
 
     def perturb_viewpoint(self, text: str, variant: Literal["multiturn", "summarized"]) -> str:
@@ -330,7 +330,7 @@ def parse_args():
     parser.add_argument(
         "--model",
         type=str,
-        default="meta-llama/Meta-Llama-3.1-8B-Instruct",
+        default="meta-llama/Llama-3.1-8B-Instruct",
         help="The model to use for perturbation"
     )
     parser.add_argument(

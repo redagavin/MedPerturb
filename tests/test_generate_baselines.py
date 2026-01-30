@@ -25,23 +25,7 @@ def test_compute_token_change_percent_different():
     assert result > 0.0
 
 
-def test_generate_baseline_structure():
-    """Test that generate_baseline returns expected structure."""
+def test_generate_baseline_is_importable():
+    """generate_baseline function must be importable."""
     from generate_baselines import generate_baseline
-
-    # Mock result for structure testing - validates the expected return dict structure
-    # The actual function requires API calls, so we just test that it's importable
-    # and has the right signature. Real integration testing would need mocked OpenAI.
-    result = {
-        'paraphrase': 'Some paraphrased text',
-        'target_pct': 10.0,
-        'actual_pct': 10.2,
-        'deviation': 0.2,
-        'retries_used': 1
-    }
-
-    assert 'paraphrase' in result
-    assert 'target_pct' in result
-    assert 'actual_pct' in result
-    assert 'deviation' in result
-    assert 'retries_used' in result
+    assert callable(generate_baseline)

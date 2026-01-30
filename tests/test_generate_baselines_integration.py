@@ -16,12 +16,10 @@ def test_perturbation_types():
 
 
 def test_load_dataset_columns():
-    """Test that dataset has required columns."""
-    # This will be a mock/sample test
-    required_cols = ['clinical_context', 'context_id']
-    df = pd.DataFrame({
-        'clinical_context': ['Patient presents...'],
-        'context_id': ['test_1']
-    })
-    for col in required_cols:
-        assert col in df.columns
+    """Dataset must have Index (unique row ID) and clinical_context columns."""
+    df = pd.read_csv('/scratch/yang.zih/cot_faithfulness/MedPerturb/data.csv')
+    assert 'Index' in df.columns, "Dataset missing 'Index' column"
+    assert 'clinical_context' in df.columns, "Dataset missing 'clinical_context' column"
+    assert df['Index'].nunique() == len(df), (
+        f"Index is not unique: {df['Index'].nunique()} unique vs {len(df)} rows"
+    )

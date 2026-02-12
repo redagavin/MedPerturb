@@ -124,3 +124,145 @@ class TestGenderPrompt:
         prompt = build_gender_prompt("Some patient info")
         assert "yes" in prompt.lower()
         assert "no" in prompt.lower()
+
+
+class TestEvaluateGenderQuestion:
+    """Tests for the per-sample gender evaluation function."""
+
+    def test_returns_three_seed_responses(self):
+        """Must return a list of 3 binary values (one per seed)."""
+        from sanity_check_evaluate import evaluate_gender_question
+
+        class MockEvaluator:
+            seeds = [0, 1, 42]
+            def _call_model(self, prompt, seed):
+                return "Yes, the patient is male."
+            def _extract_binary_answer(self, response, question_type):
+                return 1
+
+        evaluator = MockEvaluator()
+        result = evaluate_gender_question(evaluator, "Some patient info")
+        assert len(result) == 3
+        assert all(r in [0, 1] for r in result)
+
+    def test_passes_correct_question_type(self):
+        """Must pass 'GENDER' as question_type to _extract_binary_answer."""
+        from sanity_check_evaluate import evaluate_gender_question
+
+        captured_qtypes = []
+
+        class MockEvaluator:
+            seeds = [0, 1, 42]
+            def _call_model(self, prompt, seed):
+                return "Yes"
+            def _extract_binary_answer(self, response, question_type):
+                captured_qtypes.append(question_type)
+                return 1
+
+        evaluator = MockEvaluator()
+        evaluate_gender_question(evaluator, "info")
+        assert all(qt == "GENDER" for qt in captured_qtypes)
+
+
+class TestEvaluateSample:
+    """Tests for evaluating all three versions of a single sample."""
+
+    def test_returns_correct_keys(self):
+        """Result must have context_id and all three GENDER arrays."""
+        from sanity_check_evaluate import evaluate_sanity_check_sample
+
+        class MockEvaluator:
+            seeds = [0, 1, 42]
+            def _call_model(self, prompt, seed):
+                return "Yes"
+            def _extract_binary_answer(self, response, question_type):
+                return 1
+
+        sample = {
+            'context_id': 'N75',
+            'original_text': 'Female patient',
+            'swap_text': 'Male patient',
+            'baseline_text': 'Female patient paraphrased',
+        }
+        result = evaluate_sanity_check_sample(MockEvaluator(), sample)
+        assert result['context_id'] == 'N75'
+        assert 'original_GENDER' in result
+        assert 'gender_swap_GENDER' in result
+        assert 'gender_swap_baseline_GENDER' in result
+        assert len(result['original_GENDER']) == 3
+        assert len(result['gender_swap_GENDER']) == 3
+        assert len(result['gender_swap_baseline_GENDER']) == 3
+
+
+class TestCheckpointing:
+    """Tests for checkpoint save/load functionality."""
+
+    def test_save_and_load_roundtrip(self, tmp_path):
+        """Saved checkpoint must be recoverable with identical data."""
+        from sanity_check_evaluate import save_checkpoint, load_checkpoint
+
+        path = str(tmp_path / "test.pkl")
+        results = [{'context_id': 'N75', 'original_GENDER': [1, 1, 1]}]
+        completed = {'N75'}
+
+        save_checkpoint(path, results, completed)
+        loaded_results, loaded_completed = load_checkpoint(path)
+
+        assert loaded_results == results
+        assert loaded_completed == completed
+
+    def test_load_nonexistent_returns_empty(self, tmp_path):
+        """Loading from a nonexistent path must return empty state."""
+        from sanity_check_evaluate import load_checkpoint
+
+        results, completed = load_checkpoint(str(tmp_path / "nonexistent.pkl"))
+        assert results == []
+        assert completed == set()
+
+    def test_completed_ids_stored_as_set(self, tmp_path):
+        """Completed IDs must be returned as a set for O(1) lookups."""
+        from sanity_check_evaluate import save_checkpoint, load_checkpoint
+
+        path = str(tmp_path / "test.pkl")
+        save_checkpoint(path, [], {'A', 'B', 'C'})
+        _, completed = load_checkpoint(path)
+        assert isinstance(completed, set)
+        assert completed == {'A', 'B', 'C'}
+
+
+class TestShardSamples:
+    """Tests for sample sharding across GPUs."""
+
+    def test_single_gpu_returns_all(self):
+        """With 1 GPU, all samples should be returned."""
+        from sanity_check_evaluate import shard_samples
+
+        samples = [{'id': i} for i in range(10)]
+        result = shard_samples(samples, gpu_id=0, total_gpus=1)
+        assert len(result) == 10
+
+    def test_two_gpus_split_evenly(self):
+        """With 2 GPUs, samples should be split roughly evenly."""
+        from sanity_check_evaluate import shard_samples
+
+        samples = [{'id': i} for i in range(10)]
+        shard0 = shard_samples(samples, gpu_id=0, total_gpus=2)
+        shard1 = shard_samples(samples, gpu_id=1, total_gpus=2)
+        assert len(shard0) == 5
+        assert len(shard1) == 5
+        # No overlap
+        ids0 = {s['id'] for s in shard0}
+        ids1 = {s['id'] for s in shard1}
+        assert ids0.isdisjoint(ids1)
+        # Complete coverage
+        assert ids0 | ids1 == {i for i in range(10)}
+
+    def test_uneven_split(self):
+        """With odd sample count, one shard gets an extra sample."""
+        from sanity_check_evaluate import shard_samples
+
+        samples = [{'id': i} for i in range(7)]
+        shard0 = shard_samples(samples, gpu_id=0, total_gpus=3)
+        shard1 = shard_samples(samples, gpu_id=1, total_gpus=3)
+        shard2 = shard_samples(samples, gpu_id=2, total_gpus=3)
+        assert len(shard0) + len(shard1) + len(shard2) == 7

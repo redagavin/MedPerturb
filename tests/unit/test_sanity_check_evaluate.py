@@ -1,5 +1,5 @@
-# ABOUTME: Tests for sanity check evaluation data loading and alignment
-# ABOUTME: Verifies correct filtering of non-conversational samples and context_id alignment
+# ABOUTME: Tests for sanity check evaluation pipeline
+# ABOUTME: Covers data loading, prompt construction, and evaluation logic
 
 import pytest
 import pandas as pd
@@ -100,3 +100,27 @@ class TestLoadSanityCheckData:
         samples = load_sanity_check_data(str(path))
         assert len(samples) == 1
         assert samples[0]['context_id'] == 'N75'
+
+
+class TestGenderPrompt:
+    """Tests for gender question prompt construction."""
+
+    def test_prompt_contains_question(self):
+        """Prompt must include the gender question."""
+        from sanity_check_evaluate import build_gender_prompt
+        prompt = build_gender_prompt("Patient is a 30 year old female.")
+        assert "Is this patient male?" in prompt
+
+    def test_prompt_contains_patient_info(self):
+        """Prompt must include the patient information."""
+        from sanity_check_evaluate import build_gender_prompt
+        patient_info = "Patient is a 30 year old female with chest pain."
+        prompt = build_gender_prompt(patient_info)
+        assert patient_info in prompt
+
+    def test_prompt_requests_yes_no(self):
+        """Prompt must request yes/no answer format."""
+        from sanity_check_evaluate import build_gender_prompt
+        prompt = build_gender_prompt("Some patient info")
+        assert "yes" in prompt.lower()
+        assert "no" in prompt.lower()

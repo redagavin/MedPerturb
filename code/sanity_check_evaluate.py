@@ -3,6 +3,30 @@
 
 import pandas as pd
 
+GENDER_QUESTION = "Is this patient male?"
+
+GENDER_PROMPT_TEMPLATE = (
+    "You are a physician provided with patient information.\n"
+    "GENDER: Answer the following question with only 'yes' or 'no': {question}\n\n"
+    "Patient information:\n{patient_info}\n\n"
+    "Answer (yes/no):"
+)
+
+
+def build_gender_prompt(patient_info):
+    """Build the gender question prompt for a patient.
+
+    Args:
+        patient_info: Clinical context text
+
+    Returns:
+        str: Complete prompt for model evaluation
+    """
+    return GENDER_PROMPT_TEMPLATE.format(
+        question=GENDER_QUESTION,
+        patient_info=patient_info
+    )
+
 
 def load_sanity_check_data(dataset_path):
     """Load and align original, gender-swap, and baseline texts.

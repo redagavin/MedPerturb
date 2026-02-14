@@ -1,15 +1,33 @@
 # ABOUTME: Evaluate models on baseline rows only
 # ABOUTME: Supports data parallel sharding across multiple GPUs
 
-import sys
-sys.path.insert(0, '/scratch/yang.zih/cot_faithfulness/MedPerturb/.worktrees/calibrated-baselines/code')
-
 import pandas as pd
 import argparse
+import json
 import os
+import tempfile
+import shutil
 from tqdm import tqdm
 
 from evaluate_models import ModelEvaluator
+
+
+def atomic_save_csv(df: pd.DataFrame, path: str) -> None:
+    """Write CSV atomically to prevent corruption on crash."""
+    dir_path = os.path.dirname(path) or '.'
+    with tempfile.NamedTemporaryFile('w', delete=False, dir=dir_path, suffix='.tmp') as f:
+        df.to_csv(f, index=False)
+        temp_path = f.name
+    shutil.move(temp_path, path)
+
+
+def atomic_save_json(data, path: str) -> None:
+    """Write JSON atomically to prevent corruption on crash."""
+    dir_path = os.path.dirname(path) or '.'
+    with tempfile.NamedTemporaryFile('w', delete=False, dir=dir_path, suffix='.tmp') as f:
+        json.dump(data, f, indent=2)
+        temp_path = f.name
+    shutil.move(temp_path, path)
 
 
 def get_baseline_rows(df: pd.DataFrame) -> pd.DataFrame:
@@ -24,9 +42,9 @@ def shard_data(df: pd.DataFrame, gpu_id: int, total_gpus: int) -> pd.DataFrame:
 
 def get_column_prefix(model_name: str) -> str:
     """Map model name to column prefix."""
-    if '8B' in model_name:
+    if 'Llama-3' in model_name and '8B' in model_name:
         return 'LLAMA3'
-    elif '70B' in model_name:
+    elif 'Llama-3' in model_name and '70B' in model_name:
         return 'LLAMA3-70'
     else:
         raise ValueError(f"Unknown model: {model_name}")
@@ -73,39 +91,51 @@ def evaluate_baselines(
     os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_path = f"{checkpoint_dir}/baseline_eval_gpu{gpu_id}.csv"
 
-    # Load checkpoint if exists
+    # Load checkpoint if exists (preserving previous results on resume)
     completed_indices = set()
+    results = []
+    trace_data = []
     if os.path.exists(checkpoint_path):
         checkpoint_df = pd.read_csv(checkpoint_path)
-        completed_indices = set(checkpoint_df['Index'].tolist())
+        # Explicit int() coercion for type safety (CSV can read as float/string)
+        completed_indices = {int(idx) for idx in checkpoint_df['Index'].tolist()}
+        results = checkpoint_df.to_dict('records')  # Preserve existing results
         print(f"  Resuming from checkpoint: {len(completed_indices)} completed")
 
     # Evaluate
-    results = []
     for idx, row in tqdm(shard.iterrows(), total=len(shard), desc=f"GPU {gpu_id}"):
-        if row['Index'] in completed_indices:
+        if int(row['Index']) in completed_indices:
             continue
 
         # Evaluate triage questions
         triage_results = evaluator.evaluate_triage(row['clinical_context'])
 
         result = {
-            'Index': row['Index'],
-            f'{prefix}_MANAGE': majority_vote(triage_results['MANAGE']),
-            f'{prefix}_VISIT': majority_vote(triage_results['VISIT']),
-            f'{prefix}_RESOURCE': majority_vote(triage_results['RESOURCE']),
+            'Index': int(row['Index']),
+            f'{prefix}_MANAGE': majority_vote(triage_results['MANAGE']['binary_answers']),
+            f'{prefix}_VISIT': majority_vote(triage_results['VISIT']['binary_answers']),
+            f'{prefix}_RESOURCE': majority_vote(triage_results['RESOURCE']['binary_answers']),
         }
         results.append(result)
 
-        # Checkpoint
+        trace_entry = {'Index': int(row['Index'])}
+        for qt in ['MANAGE', 'VISIT', 'RESOURCE']:
+            trace_entry[qt] = triage_results[qt]
+        trace_data.append(trace_entry)
+
+        # Checkpoint (atomic to prevent corruption on crash)
         if len(results) % checkpoint_freq == 0:
             results_df = pd.DataFrame(results)
-            results_df.to_csv(checkpoint_path, index=False)
+            atomic_save_csv(results_df, checkpoint_path)
+            trace_path = checkpoint_path.replace('.csv', '_trace.json')
+            atomic_save_json(trace_data, trace_path)
 
-    # Final save
+    # Final save (atomic)
     if results:
         results_df = pd.DataFrame(results)
-        results_df.to_csv(checkpoint_path, index=False)
+        atomic_save_csv(results_df, checkpoint_path)
+        trace_path = checkpoint_path.replace('.csv', '_trace.json')
+        atomic_save_json(trace_data, trace_path)
 
     return pd.DataFrame(results)
 

@@ -1,5 +1,5 @@
 # ABOUTME: Tests for sanity check MI analysis
-# ABOUTME: Verifies majority voting, deviation filtering, and MI computation
+# ABOUTME: Verifies majority voting and MI computation
 
 import pytest
 import numpy as np
@@ -51,9 +51,9 @@ class TestSanityCheckAnalysis:
             swap_val = is_female if np.random.random() < 0.7 else is_male
             eval_results.append({
                 'context_id': f'N{i}',
-                'original_GENDER': [is_male, is_male, is_male],
-                'gender_swap_GENDER': [swap_val, swap_val, swap_val],
-                'gender_swap_baseline_GENDER': [is_male, is_male, is_male],
+                'original_GENDER': {'binary_answers': [is_male, is_male, is_male]},
+                'gender_swap_GENDER': {'binary_answers': [swap_val, swap_val, swap_val]},
+                'gender_swap_baseline_GENDER': {'binary_answers': [is_male, is_male, is_male]},
             })
 
         result = run_sanity_check_analysis(eval_results)
@@ -75,9 +75,9 @@ class TestSanityCheckAnalysis:
             swap_val = is_female if np.random.random() < 0.8 else is_male
             eval_results.append({
                 'context_id': f'N{i}',
-                'original_GENDER': [is_male, is_male, is_male],
-                'gender_swap_GENDER': [swap_val, swap_val, swap_val],
-                'gender_swap_baseline_GENDER': [is_male, is_male, is_male],
+                'original_GENDER': {'binary_answers': [is_male, is_male, is_male]},
+                'gender_swap_GENDER': {'binary_answers': [swap_val, swap_val, swap_val]},
+                'gender_swap_baseline_GENDER': {'binary_answers': [is_male, is_male, is_male]},
             })
 
         result = run_sanity_check_analysis(eval_results)
@@ -89,9 +89,9 @@ class TestSanityCheckAnalysis:
 
         eval_results = [
             {'context_id': f'N{i}',
-             'original_GENDER': [i % 2, i % 2, i % 2],
-             'gender_swap_GENDER': [1 - i % 2, 1 - i % 2, 1 - i % 2],
-             'gender_swap_baseline_GENDER': [i % 2, i % 2, i % 2]}
+             'original_GENDER': {'binary_answers': [i % 2, i % 2, i % 2]},
+             'gender_swap_GENDER': {'binary_answers': [1 - i % 2, 1 - i % 2, 1 - i % 2]},
+             'gender_swap_baseline_GENDER': {'binary_answers': [i % 2, i % 2, i % 2]}}
             for i in range(20)
         ]
 

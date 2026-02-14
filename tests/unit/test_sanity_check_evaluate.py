@@ -130,7 +130,7 @@ class TestEvaluateGenderQuestion:
     """Tests for the per-sample gender evaluation function."""
 
     def test_returns_three_seed_responses(self):
-        """Must return a list of 3 binary values (one per seed)."""
+        """Must return a dict with 3 binary values (one per seed)."""
         from sanity_check_evaluate import evaluate_gender_question
 
         class MockEvaluator:
@@ -138,12 +138,13 @@ class TestEvaluateGenderQuestion:
             def _call_model(self, prompt, seed):
                 return "Yes, the patient is male."
             def _extract_binary_answer(self, response, question_type):
-                return 1
+                return {"answer": 1, "extractor_output": "1",
+                        "extraction_method": "integer_parse"}
 
         evaluator = MockEvaluator()
         result = evaluate_gender_question(evaluator, "Some patient info")
-        assert len(result) == 3
-        assert all(r in [0, 1] for r in result)
+        assert len(result['binary_answers']) == 3
+        assert all(r in [0, 1] for r in result['binary_answers'])
 
     def test_passes_correct_question_type(self):
         """Must pass 'GENDER' as question_type to _extract_binary_answer."""
@@ -157,7 +158,8 @@ class TestEvaluateGenderQuestion:
                 return "Yes"
             def _extract_binary_answer(self, response, question_type):
                 captured_qtypes.append(question_type)
-                return 1
+                return {"answer": 1, "extractor_output": "1",
+                        "extraction_method": "integer_parse"}
 
         evaluator = MockEvaluator()
         evaluate_gender_question(evaluator, "info")
@@ -168,7 +170,7 @@ class TestEvaluateSample:
     """Tests for evaluating all three versions of a single sample."""
 
     def test_returns_correct_keys(self):
-        """Result must have context_id and all three GENDER arrays."""
+        """Result must have context_id and all three GENDER trace dicts."""
         from sanity_check_evaluate import evaluate_sanity_check_sample
 
         class MockEvaluator:
@@ -176,7 +178,8 @@ class TestEvaluateSample:
             def _call_model(self, prompt, seed):
                 return "Yes"
             def _extract_binary_answer(self, response, question_type):
-                return 1
+                return {"answer": 1, "extractor_output": "1",
+                        "extraction_method": "integer_parse"}
 
         sample = {
             'context_id': 'N75',
@@ -189,9 +192,34 @@ class TestEvaluateSample:
         assert 'original_GENDER' in result
         assert 'gender_swap_GENDER' in result
         assert 'gender_swap_baseline_GENDER' in result
-        assert len(result['original_GENDER']) == 3
-        assert len(result['gender_swap_GENDER']) == 3
-        assert len(result['gender_swap_baseline_GENDER']) == 3
+        assert len(result['original_GENDER']['binary_answers']) == 3
+        assert len(result['gender_swap_GENDER']['binary_answers']) == 3
+        assert len(result['gender_swap_baseline_GENDER']['binary_answers']) == 3
+
+
+class TestTraceDataReturn:
+    """evaluate_gender_question must return trace data dict."""
+
+    def test_returns_trace_dict(self):
+        """Must return dict with binary_answers, model_responses, etc."""
+        from sanity_check_evaluate import evaluate_gender_question
+
+        class MockEvaluator:
+            seeds = [0, 1, 42]
+            def _call_model(self, prompt, seed):
+                return "Yes, the patient is male."
+            def _extract_binary_answer(self, response, question_type):
+                return {"answer": 1, "extractor_output": "1",
+                        "extraction_method": "integer_parse"}
+
+        result = evaluate_gender_question(MockEvaluator(), "Some info")
+        assert isinstance(result, dict)
+        assert 'binary_answers' in result
+        assert 'model_responses' in result
+        assert 'extractor_outputs' in result
+        assert 'extraction_methods' in result
+        assert len(result['binary_answers']) == 3
+        assert all(r in [0, 1] for r in result['binary_answers'])
 
 
 class TestCheckpointing:

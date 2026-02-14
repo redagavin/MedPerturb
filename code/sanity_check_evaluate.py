@@ -81,15 +81,30 @@ def evaluate_gender_question(evaluator, patient_info):
         patient_info: Clinical context text
 
     Returns:
-        list[int]: Binary responses (0/1) for each seed
+        dict: {seeds, model_responses, extractor_outputs, extraction_methods, binary_answers}
     """
     prompt = build_gender_prompt(patient_info)
-    responses = []
+    model_responses = []
+    extractor_outputs = []
+    extraction_methods = []
+    binary_answers = []
+
     for seed in evaluator.seeds:
         response = evaluator._call_model(prompt, seed)
-        binary = evaluator._extract_binary_answer(response, "GENDER")
-        responses.append(binary)
-    return responses
+        extraction = evaluator._extract_binary_answer(response, "GENDER")
+
+        model_responses.append(response)
+        extractor_outputs.append(extraction["extractor_output"])
+        extraction_methods.append(extraction["extraction_method"])
+        binary_answers.append(extraction["answer"])
+
+    return {
+        "seeds": list(evaluator.seeds),
+        "model_responses": model_responses,
+        "extractor_outputs": extractor_outputs,
+        "extraction_methods": extraction_methods,
+        "binary_answers": binary_answers,
+    }
 
 
 def evaluate_sanity_check_sample(evaluator, sample):

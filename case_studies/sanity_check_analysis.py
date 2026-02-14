@@ -32,9 +32,9 @@ def run_sanity_check_analysis(eval_results, n_bootstrap=1000):
     baseline_votes = []
 
     for r in eval_results:
-        orig_votes.append(majority_vote(r['original_GENDER']))
-        swap_votes.append(majority_vote(r['gender_swap_GENDER']))
-        baseline_votes.append(majority_vote(r['gender_swap_baseline_GENDER']))
+        orig_votes.append(majority_vote(r['original_GENDER']['binary_answers']))
+        swap_votes.append(majority_vote(r['gender_swap_GENDER']['binary_answers']))
+        baseline_votes.append(majority_vote(r['gender_swap_baseline_GENDER']['binary_answers']))
 
     orig = pd.Series(orig_votes)
     swap = pd.Series(swap_votes)

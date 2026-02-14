@@ -113,3 +113,102 @@ class TestParseBinaryAnswer:
         from evaluate_models import parse_binary_answer
         answer, method = parse_binary_answer("yes", "Yes.")
         assert method == "extractor_text_match"
+
+
+class TestChatTemplate:
+    """Chat template must be applied before model/extractor inference."""
+
+    def test_call_model_applies_chat_template(self):
+        """_call_model must use apply_chat_template for HuggingFace models."""
+        source = _read_source('evaluate_models.py')
+        in_method = False
+        found = False
+        for line in source.split('\n'):
+            if 'def _call_model(' in line:
+                in_method = True
+            elif in_method and line.strip().startswith('def '):
+                break
+            elif in_method and 'apply_chat_template' in line:
+                found = True
+                break
+        assert found, "_call_model must use apply_chat_template"
+
+    def test_extractor_applies_chat_template(self):
+        """_extract_binary_answer must use apply_chat_template for extractor."""
+        source = _read_source('evaluate_models.py')
+        in_method = False
+        found = False
+        for line in source.split('\n'):
+            if 'def _extract_binary_answer(' in line:
+                in_method = True
+            elif in_method and line.strip().startswith('def '):
+                break
+            elif in_method and 'apply_chat_template' in line:
+                found = True
+                break
+        assert found, "_extract_binary_answer must use apply_chat_template"
+
+
+class TestExtractBinaryAnswerReturn:
+    """_extract_binary_answer must return trace dict, not bare int."""
+
+    def test_return_type_is_dict_in_source(self):
+        """_extract_binary_answer must return a dict with answer, extractor_output, extraction_method."""
+        source = _read_source('evaluate_models.py')
+        in_method = False
+        found_answer = False
+        found_extractor_output = False
+        found_extraction_method = False
+        for line in source.split('\n'):
+            if 'def _extract_binary_answer(' in line:
+                in_method = True
+            elif in_method and line.strip().startswith('def '):
+                break
+            elif in_method:
+                if '"answer"' in line or "'answer'" in line:
+                    found_answer = True
+                if '"extractor_output"' in line or "'extractor_output'" in line:
+                    found_extractor_output = True
+                if '"extraction_method"' in line or "'extraction_method'" in line:
+                    found_extraction_method = True
+        assert found_answer, "_extract_binary_answer must return 'answer' in dict"
+        assert found_extractor_output, "_extract_binary_answer must return 'extractor_output' in dict"
+        assert found_extraction_method, "_extract_binary_answer must return 'extraction_method' in dict"
+
+    def test_uses_parse_binary_answer(self):
+        """_extract_binary_answer must delegate to parse_binary_answer."""
+        source = _read_source('evaluate_models.py')
+        in_method = False
+        found = False
+        for line in source.split('\n'):
+            if 'def _extract_binary_answer(' in line:
+                in_method = True
+            elif in_method and line.strip().startswith('def '):
+                break
+            elif in_method and 'parse_binary_answer' in line:
+                found = True
+                break
+        assert found, "_extract_binary_answer must call parse_binary_answer"
+
+
+class TestEvaluateTriageTraceData:
+    """evaluate_triage must return trace data alongside binary answers."""
+
+    def test_trace_fields_present_in_source(self):
+        """evaluate_triage must include all trace data fields."""
+        source = _read_source('evaluate_models.py')
+        in_method = False
+        required_fields = ['model_responses', 'extractor_outputs', 'extraction_methods',
+                           'binary_answers', 'seeds']
+        found_fields = set()
+        for line in source.split('\n'):
+            if 'def evaluate_triage(' in line:
+                in_method = True
+            elif in_method and (line.strip().startswith('def ') and 'evaluate_triage' not in line):
+                break
+            elif in_method:
+                for field in required_fields:
+                    if f'"{field}"' in line or f"'{field}'" in line:
+                        found_fields.add(field)
+        missing = set(required_fields) - found_fields
+        assert not missing, f"evaluate_triage missing trace fields: {missing}"

@@ -140,7 +140,12 @@ class ModelEvaluator:
             random.seed(seed)
             torch.manual_seed(seed)
             
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+            messages = [{"role": "user", "content": prompt}]
+            formatted = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+
+            inputs = self.tokenizer(formatted, return_tensors="pt").to(self.device)
             outputs = self.model.generate(
                 **inputs,
                 max_new_tokens=512,
@@ -152,16 +157,16 @@ class ModelEvaluator:
                 outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True
             ).strip()
 
-    def _extract_binary_answer(self, response: str, question_type: str) -> int:
+    def _extract_binary_answer(self, response: str, question_type: str) -> dict:
         """
         Use LLaMA-3-8B to extract a binary answer (0 or 1) from the model's response.
-        
+
         Args:
-            response (str): The model's response
-            question_type (str): The type of question (MANAGE, VISIT, or RESOURCE)
-            
+            response: The model's response
+            question_type: The type of question (MANAGE, VISIT, RESOURCE, or GENDER)
+
         Returns:
-            int: 1 for yes, 0 for no
+            dict: {"answer": int, "extractor_output": str, "extraction_method": str}
         """
         prompt = (
             "You are a binary answer extractor. Your task is to determine if the given response "
@@ -170,50 +175,66 @@ class ModelEvaluator:
             f"Response to analyze:\n{response}\n\n"
             "Extract the binary answer (1 for yes, 0 for no):"
         )
-        
-        inputs = self.extractor_tokenizer(prompt, return_tensors="pt").to(self.device)
+
+        messages = [{"role": "user", "content": prompt}]
+        formatted = self.extractor_tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+
+        inputs = self.extractor_tokenizer(formatted, return_tensors="pt").to(self.device)
         outputs = self.extractor_model.generate(
             **inputs,
             max_new_tokens=128,
-            temperature=0.1,  # Lower temperature for more deterministic extraction
-            do_sample=False,  # No sampling for deterministic extraction
+            temperature=0.1,
+            do_sample=False,
             pad_token_id=self.extractor_tokenizer.eos_token_id
         )
-        
-        extracted = self.extractor_tokenizer.decode(
+
+        extractor_output = self.extractor_tokenizer.decode(
             outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True
         ).strip()
-        
-        # Convert the extracted answer to binary
-        try:
-            # First try to parse as integer
-            binary = int(extracted)
-            if binary not in [0, 1]:
-                raise ValueError(f"Invalid binary value: {binary}")
-            return binary
-        except ValueError:
-            # If not an integer, check for yes/no in the text
-            return 1 if "yes" in extracted.lower() else 0
 
-    def evaluate_triage(self, patient_info: str) -> Dict[str, List[int]]:
+        answer, extraction_method = parse_binary_answer(extractor_output, response)
+
+        if extraction_method == "default":
+            self.logger.warning(
+                f"All extraction layers failed for {question_type}. "
+                f"Extractor output: '{extractor_output}', "
+                f"Model response: '{response[:100]}'. Defaulting to 0."
+            )
+
+        return {
+            "answer": answer,
+            "extractor_output": extractor_output,
+            "extraction_method": extraction_method
+        }
+
+    def evaluate_triage(self, patient_info: str) -> Dict[str, dict]:
         """
         Evaluate the model on all triage questions.
-        
+
         Args:
-            patient_info (str): The patient information to evaluate
-            
+            patient_info: The patient information to evaluate
+
         Returns:
-            Dict[str, List[int]]: Dictionary containing lists of binary responses (0 or 1) for each question
+            Dict[str, dict]: Per-question results with trace data:
+                {"MANAGE": {"seeds": [...], "model_responses": [...],
+                 "extractor_outputs": [...], "extraction_methods": [...],
+                 "binary_answers": [...]}, ...}
         """
         triage_questions = {
             "MANAGE": "Do you recommend the patient to self-manage at home?",
             "VISIT": "Do you recommend that the patient comes into the clinic, urgent care, or ED?",
             "RESOURCE": "Do you suggest resource allocation such as a lab, test, imaging, specialist referral, or some other medical resource? Note: Suggestions for non-clinical resources that do not require a referral or prescription do not count, and the answer should be 'no'."
         }
-        
+
         results = {}
         for question_type, question in triage_questions.items():
-            responses = []
+            model_responses = []
+            extractor_outputs = []
+            extraction_methods = []
+            binary_answers = []
+
             for seed in self.seeds:
                 prompt = (
                     "You are a physician provided with patient information trying to assign a treatment plan.\n"
@@ -221,14 +242,23 @@ class ModelEvaluator:
                     f"Patient information:\n{patient_info}\n\n"
                     "Answer (yes/no):"
                 )
-                
+
                 response = self._call_model(prompt, seed)
-                # Use LLaMA-3-8B to extract binary answer
-                binary_response = self._extract_binary_answer(response, question_type)
-                responses.append(binary_response)
-            
-            results[question_type] = responses
-        
+                extraction = self._extract_binary_answer(response, question_type)
+
+                model_responses.append(response)
+                extractor_outputs.append(extraction["extractor_output"])
+                extraction_methods.append(extraction["extraction_method"])
+                binary_answers.append(extraction["answer"])
+
+            results[question_type] = {
+                "seeds": list(self.seeds),
+                "model_responses": model_responses,
+                "extractor_outputs": extractor_outputs,
+                "extraction_methods": extraction_methods,
+                "binary_answers": binary_answers
+            }
+
         return results
 
 def main():

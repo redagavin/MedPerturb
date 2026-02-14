@@ -1,16 +1,17 @@
 #!/bin/bash
 #SBATCH --job-name=baseline_eval
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:h200:4
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=320G
-#SBATCH --time=24:00:00
-#SBATCH --output=logs/baseline_eval_%j.out
-#SBATCH --error=logs/baseline_eval_%j.err
+#SBATCH --gres=gpu:h200:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=160G
+#SBATCH --time=8:00:00
+#SBATCH --array=0-3
+#SBATCH --output=logs/baseline_eval_%A_%a.out
+#SBATCH --error=logs/baseline_eval_%A_%a.err
 #SBATCH --signal=INT@300
 
-# ABOUTME: SLURM script for baseline evaluation with 4 H200 GPUs
-# ABOUTME: Runs data parallel evaluation across GPUs
+# ABOUTME: SLURM script for baseline evaluation with data-parallel array jobs
+# ABOUTME: 4 array tasks, each with 1 H200 GPU, 8h time limit
 
 MODEL=${1:-"meta-llama/Llama-3.1-8B-Instruct"}
 DATASET=${2:-"data_with_baselines.csv"}
@@ -18,66 +19,49 @@ DATASET=${2:-"data_with_baselines.csv"}
 echo "======================================"
 echo "Baseline Evaluation"
 echo "======================================"
+echo "Job ID: ${SLURM_ARRAY_JOB_ID}"
+echo "Array Task ID: ${SLURM_ARRAY_TASK_ID}"
+echo "Total Tasks: ${SLURM_ARRAY_TASK_COUNT}"
 echo "Model: ${MODEL}"
 echo "Dataset: ${DATASET}"
-echo "GPUs: 4x H200"
 echo "Started at: $(date)"
 echo ""
+
+nvidia-smi
 
 # Setup
 source ~/.bashrc
 conda activate cot
 
-# Use script's directory as base (works from worktree or main repo)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MEDPERTURB_DIR="$(dirname "${SCRIPT_DIR}")"
+# SLURM copies scripts to temp location, so BASH_SOURCE won't work
+MEDPERTURB_DIR="/scratch/yang.zih/cot_faithfulness/MedPerturb"
 cd "${MEDPERTURB_DIR}"
 
 mkdir -p logs
 mkdir -p checkpoints/baseline_eval
 
-# Launch 4 parallel processes
-for GPU_ID in 0 1 2 3; do
-    CUDA_VISIBLE_DEVICES=${GPU_ID} python code/evaluate_baselines.py \
-        --model "${MODEL}" \
-        --dataset "${DATASET}" \
-        --gpu_id ${GPU_ID} \
-        --total_gpus 4 \
-        --checkpoint_dir checkpoints/baseline_eval \
-        --checkpoint_freq 10 &
-done
+# Run evaluation for this GPU's shard (4 GPUs matches --array=0-3)
+python code/evaluate_baselines.py \
+    --model "${MODEL}" \
+    --dataset "${DATASET}" \
+    --gpu_id ${SLURM_ARRAY_TASK_ID} \
+    --total_gpus 4 \
+    --checkpoint_dir checkpoints/baseline_eval \
+    --checkpoint_freq 10
 
-# Wait for all to complete
-wait
+EXIT_CODE=$?
+
+# Create completion marker (4 matches --array=0-3 and orchestration TOTAL_GPUS)
+if [ $EXIT_CODE -eq 0 ]; then
+    MODEL_SHORT=$(echo $MODEL | sed 's/.*\///' | tr '[:upper:]' '[:lower:]' | tr '-' '_')
+    touch "checkpoints/baseline_eval/${MODEL_SHORT}_gpu${SLURM_ARRAY_TASK_ID}_of_4_COMPLETE"
+    echo "Created completion marker"
+fi
 
 echo ""
 echo "======================================"
-echo "All GPUs complete!"
 echo "Completed at: $(date)"
+echo "Exit code: ${EXIT_CODE}"
 echo "======================================"
 
-# Merge results
-python << EOF
-import pandas as pd
-import glob
-
-# Load original dataset
-df = pd.read_csv('${DATASET}')
-
-# Load checkpoint files
-checkpoint_files = glob.glob('checkpoints/baseline_eval/baseline_eval_gpu*.csv')
-print(f"Found {len(checkpoint_files)} checkpoint files")
-
-# Merge results
-for f in checkpoint_files:
-    results = pd.read_csv(f)
-    for _, row in results.iterrows():
-        idx = df[df['Index'] == row['Index']].index[0]
-        for col in results.columns:
-            if col != 'Index':
-                df.loc[idx, col] = row[col]
-
-# Save
-df.to_csv('${DATASET}', index=False)
-print(f"Updated {DATASET} with {len(results)} baseline evaluations")
-EOF
+exit ${EXIT_CODE}

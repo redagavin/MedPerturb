@@ -2,6 +2,7 @@
 # ABOUTME: Uses dataset_id/context_id structure to link perturbations to originals
 
 import argparse
+import os
 import sys
 sys.path.insert(0, '/scratch/yang.zih/cot_faithfulness/src')
 
@@ -86,71 +87,104 @@ async def generate_baselines_for_perturbations(
     # Get perturbation rows only (dataset_id 2-5)
     perturbation_rows = df[df['dataset_id'].isin([2, 3, 4, 5])]
 
+    # Load existing baselines for resume (preserves previous work on restart)
     baselines = []
+    completed_sources = set()
+    if os.path.exists(output_path):
+        with open(output_path, 'r') as f:
+            baselines = json.load(f)
+            completed_sources = {int(b['source_index']) for b in baselines}
+            print(f"  Resuming: {len(baselines)} baselines already generated")
     baselines_lock = asyncio.Lock()
+    failed_items = []
+    failed_lock = asyncio.Lock()
     semaphore = asyncio.Semaphore(max_concurrent)
     completed_count = 0
     completed_lock = asyncio.Lock()
 
+    def atomic_save(data, path):
+        """Write JSON atomically to prevent corruption on crash."""
+        import tempfile
+        import shutil
+        dir_path = os.path.dirname(path) or '.'
+        with tempfile.NamedTemporaryFile('w', delete=False, dir=dir_path, suffix='.tmp') as f:
+            json.dump(data, f, indent=2)
+            temp_path = f.name
+        shutil.move(temp_path, path)
+
     async def process_perturbation(pert_row):
         nonlocal completed_count
 
-        # Find original
-        original = find_original(df, pert_row)
+        # Skip if already completed (resume logic)
+        if int(pert_row['Index']) in completed_sources:
+            return
 
-        # Compute token change %
-        target_pct = compute_token_change_percent(
-            original['clinical_context'],
-            pert_row['clinical_context'],
-            tokenizer
-        )
+        try:
+            # Find original
+            original = find_original(df, pert_row)
 
-        # Generate calibrated paraphrase
-        async with semaphore:
-            if _paraphrase_fn is not None:
-                result = await _paraphrase_fn(
-                    original['clinical_context'],
-                    target_pct,
-                    tokenizer,
-                    openai_client,
-                    max_retries,
-                    tolerance
-                )
-            else:
-                result = await generate_calibrated_paraphrase_async(
-                    question=original['clinical_context'],
-                    target_pct=target_pct,
-                    tokenizer=tokenizer,
-                    openai_client=openai_client,
-                    max_retries=max_retries,
-                    tolerance=tolerance
-                )
+            # Compute token change %
+            target_pct = compute_token_change_percent(
+                original['clinical_context'],
+                pert_row['clinical_context'],
+                tokenizer
+            )
 
-        # Build baseline entry
-        baseline = {
-            'source_index': int(pert_row['Index']),
-            'original_index': int(original['Index']),
-            'dataset': pert_row['dataset'],
-            'context_id': pert_row['context_id'],
-            'perturbation_type': int(pert_row['dataset_id']),
-            'baseline_dataset_id': int(pert_row['dataset_id']) + 4,
-            'paraphrase': result['paraphrase'],
-            'target_pct': target_pct,
-            'actual_pct': result['actual_pct'],
-            'deviation': result['deviation'],
-            'retries_used': result['retries_used']
-        }
+            # Generate calibrated paraphrase
+            async with semaphore:
+                if _paraphrase_fn is not None:
+                    result = await _paraphrase_fn(
+                        original['clinical_context'],
+                        target_pct,
+                        tokenizer,
+                        openai_client,
+                        max_retries,
+                        tolerance
+                    )
+                else:
+                    result = await generate_calibrated_paraphrase_async(
+                        question=original['clinical_context'],
+                        target_pct=target_pct,
+                        tokenizer=tokenizer,
+                        openai_client=openai_client,
+                        max_retries=max_retries,
+                        tolerance=tolerance
+                    )
 
-        async with baselines_lock:
-            baselines.append(baseline)
+            # Build baseline entry
+            baseline = {
+                'source_index': int(pert_row['Index']),
+                'original_index': int(original['Index']),
+                'dataset': pert_row['dataset'],
+                'context_id': pert_row['context_id'],
+                'perturbation_type': int(pert_row['dataset_id']),
+                'baseline_dataset_id': int(pert_row['dataset_id']) + 4,
+                'paraphrase': result['paraphrase'],
+                'target_pct': target_pct,
+                'actual_pct': result['actual_pct'],
+                'deviation': result['deviation'],
+                'retries_used': result['retries_used']
+            }
 
-        # Checkpoint
+            async with baselines_lock:
+                baselines.append(baseline)
+
+        except Exception as e:
+            # Track failed items instead of crashing
+            async with failed_lock:
+                failed_items.append({
+                    'index': int(pert_row['Index']),
+                    'error': str(e)
+                })
+            print(f"ERROR: Failed to process perturbation {pert_row['Index']}: {e}")
+            return
+
+        # Checkpoint (only on success)
         async with completed_lock:
             completed_count += 1
             if completed_count % checkpoint_freq == 0:
                 async with baselines_lock:
-                    with open(output_path, 'w') as f:
-                        json.dump(baselines, f, indent=2)
+                    atomic_save(baselines, output_path)
 
     # Create tasks for all perturbations
     tasks = [process_perturbation(row) for _, row in perturbation_rows.iterrows()]
@@ -158,11 +192,18 @@ async def generate_baselines_for_perturbations(
     # Run with progress bar
     await atqdm.gather(*tasks, desc="Generating baselines")
 
-    # Final save
-    with open(output_path, 'w') as f:
-        json.dump(baselines, f, indent=2)
+    # Final save (atomic)
+    atomic_save(baselines, output_path)
 
-    return baselines
+    # Report failures
+    if failed_items:
+        print(f"\nWARNING: {len(failed_items)} items failed to process:")
+        for item in failed_items[:10]:  # Show first 10
+            print(f"  Index {item['index']}: {item['error']}")
+        if len(failed_items) > 10:
+            print(f"  ... and {len(failed_items) - 10} more")
+
+    return baselines, failed_items
 
 
 if __name__ == "__main__":
@@ -203,7 +244,7 @@ if __name__ == "__main__":
 
     print(f"\nGenerating baselines with {args.max_concurrent} concurrent requests...")
 
-    baselines = asyncio.run(generate_baselines_for_perturbations(
+    baselines, failed = asyncio.run(generate_baselines_for_perturbations(
         df=df,
         tokenizer=tokenizer,
         output_path=args.output,
@@ -212,4 +253,6 @@ if __name__ == "__main__":
     ))
 
     print(f"\nDone! Generated {len(baselines)} baselines")
+    if failed:
+        print(f"WARNING: {len(failed)} items failed - check logs above")
     print(f"Saved to: {args.output}")

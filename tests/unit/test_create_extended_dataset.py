@@ -5,7 +5,7 @@ import pytest
 import pandas as pd
 import json
 import sys
-sys.path.insert(0, '/scratch/yang.zih/cot_faithfulness/MedPerturb/.worktrees/calibrated-baselines/code')
+sys.path.insert(0, '/scratch/yang.zih/cot_faithfulness/MedPerturb/code')
 
 
 class TestCreateExtendedDataset:
@@ -158,3 +158,121 @@ class TestCreateExtendedDataset:
         baseline_row = result_df[result_df['dataset_id'] == 6].iloc[0]
         assert pd.isna(baseline_row['LLAMA3_MANAGE'])
         assert pd.isna(baseline_row['LLAMA3-70_MANAGE'])
+
+    def test_refuses_to_overwrite_existing_model_outputs(self, tmp_path):
+        """Must refuse to overwrite file that already has model evaluation results."""
+        from create_extended_dataset import create_extended_dataset
+
+        # Create original dataset
+        original_df = pd.DataFrame({
+            'Index': [0, 1],
+            'dataset': ['askadoc', 'askadoc'],
+            'dataset_id': [1, 2],
+            'context_id': ['N75', 'N75'],
+            'original_patient_gender': ['F', 'F'],
+            'clinical_context': ['orig', 'pert'],
+        })
+
+        baselines = [{
+            'source_index': 1,
+            'original_index': 0,
+            'dataset': 'askadoc',
+            'context_id': 'N75',
+            'perturbation_type': 2,
+            'baseline_dataset_id': 6,
+            'paraphrase': 'baseline',
+            'target_pct': 10.0,
+            'actual_pct': 10.0,
+            'deviation': 0.0,
+            'retries_used': 0
+        }]
+
+        dataset_path = tmp_path / 'data.csv'
+        baselines_path = tmp_path / 'baselines.json'
+        output_path = tmp_path / 'data_with_baselines.csv'
+
+        original_df.to_csv(dataset_path, index=False)
+        with open(baselines_path, 'w') as f:
+            json.dump(baselines, f)
+
+        # Create existing output file WITH model results
+        existing_df = pd.DataFrame({
+            'Index': [0, 1, 800],
+            'dataset': ['askadoc', 'askadoc', 'askadoc'],
+            'dataset_id': [1, 2, 6],
+            'context_id': ['N75', 'N75', 'N75'],
+            'original_patient_gender': ['F', 'F', 'F'],
+            'clinical_context': ['orig', 'pert', 'baseline'],
+            'LLAMA3_MANAGE': [1, 0, 1],  # Model outputs exist!
+            'LLAMA3_VISIT': [0, 1, 0],
+            'LLAMA3_RESOURCE': [1, 1, 1],
+        })
+        existing_df.to_csv(output_path, index=False)
+
+        # Should raise error refusing to overwrite
+        with pytest.raises(ValueError, match="already contains model evaluation results"):
+            create_extended_dataset(
+                str(dataset_path),
+                str(baselines_path),
+                str(output_path)
+            )
+
+    def test_allows_overwrite_with_force_flag(self, tmp_path):
+        """Must allow overwrite when force=True."""
+        from create_extended_dataset import create_extended_dataset
+
+        # Create original dataset
+        original_df = pd.DataFrame({
+            'Index': [0, 1],
+            'dataset': ['askadoc', 'askadoc'],
+            'dataset_id': [1, 2],
+            'context_id': ['N75', 'N75'],
+            'original_patient_gender': ['F', 'F'],
+            'clinical_context': ['orig', 'pert'],
+        })
+
+        baselines = [{
+            'source_index': 1,
+            'original_index': 0,
+            'dataset': 'askadoc',
+            'context_id': 'N75',
+            'perturbation_type': 2,
+            'baseline_dataset_id': 6,
+            'paraphrase': 'new baseline',
+            'target_pct': 10.0,
+            'actual_pct': 10.0,
+            'deviation': 0.0,
+            'retries_used': 0
+        }]
+
+        dataset_path = tmp_path / 'data.csv'
+        baselines_path = tmp_path / 'baselines.json'
+        output_path = tmp_path / 'data_with_baselines.csv'
+
+        original_df.to_csv(dataset_path, index=False)
+        with open(baselines_path, 'w') as f:
+            json.dump(baselines, f)
+
+        # Create existing output with model results
+        existing_df = pd.DataFrame({
+            'Index': [0, 1, 800],
+            'dataset': ['askadoc', 'askadoc', 'askadoc'],
+            'dataset_id': [1, 2, 6],
+            'context_id': ['N75', 'N75', 'N75'],
+            'original_patient_gender': ['F', 'F', 'F'],
+            'clinical_context': ['orig', 'pert', 'old baseline'],
+            'LLAMA3_MANAGE': [1, 0, 1],
+        })
+        existing_df.to_csv(output_path, index=False)
+
+        # Should succeed with force=True
+        result_df = create_extended_dataset(
+            str(dataset_path),
+            str(baselines_path),
+            str(output_path),
+            force=True
+        )
+
+        # New baseline text should be there
+        baseline_row = result_df[result_df['dataset_id'] == 6].iloc[0]
+        assert baseline_row['clinical_context'] == 'new baseline'

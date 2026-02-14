@@ -1,6 +1,7 @@
 # ABOUTME: Create extended dataset by appending baseline rows
 # ABOUTME: Baseline rows have dataset_id 6-9 and empty model output columns
 
+import os
 import pandas as pd
 import json
 import argparse
@@ -9,7 +10,8 @@ import argparse
 def create_extended_dataset(
     dataset_path: str,
     baselines_path: str,
-    output_path: str
+    output_path: str,
+    force: bool = False
 ) -> pd.DataFrame:
     """
     Create extended dataset by appending baseline rows.
@@ -18,10 +20,26 @@ def create_extended_dataset(
         dataset_path: Path to original data.csv
         baselines_path: Path to baselines.json
         output_path: Path to save extended dataset
+        force: If True, overwrite even if output has model results
 
     Returns:
         pd.DataFrame: Extended dataset with baseline rows
+
+    Raises:
+        ValueError: If output_path exists with model evaluation results and force=False
     """
+    # Check for existing output with model results (prevent accidental data loss)
+    if os.path.exists(output_path) and not force:
+        existing_df = pd.read_csv(output_path)
+        model_cols = [c for c in existing_df.columns if c.startswith('LLAMA')]
+        if model_cols:
+            has_results = existing_df[model_cols].notna().any().any()
+            if has_results:
+                raise ValueError(
+                    f"{output_path} already contains model evaluation results. "
+                    "Re-running would destroy this data. Use force=True to overwrite."
+                )
+
     # Load original dataset
     df = pd.read_csv(dataset_path)
 
@@ -79,6 +97,8 @@ if __name__ == "__main__":
                         help='Path to baselines JSON')
     parser.add_argument('--output', type=str, default='data_with_baselines.csv',
                         help='Output path for extended dataset')
+    parser.add_argument('--force', action='store_true',
+                        help='Overwrite output even if it has model results')
 
     args = parser.parse_args()
 
@@ -88,7 +108,8 @@ if __name__ == "__main__":
     result_df = create_extended_dataset(
         args.dataset,
         args.baselines,
-        args.output
+        args.output,
+        force=args.force
     )
 
     print(f"\nExtended dataset created:")

@@ -102,7 +102,7 @@ class TestGenerateBaselinesForPerturbations:
 
         output_path = tmp_path / 'baselines.json'
 
-        baselines = asyncio.run(generate_baselines_for_perturbations(
+        baselines, failed = asyncio.run(generate_baselines_for_perturbations(
             df=df,
             tokenizer=MockTokenizer(),
             output_path=str(output_path),
@@ -112,6 +112,7 @@ class TestGenerateBaselinesForPerturbations:
 
         # Should have 2 baselines (for dataset_id 2 and 3)
         assert len(baselines) == 2
+        assert len(failed) == 0
 
         # Check structure
         for b in baselines:
@@ -143,7 +144,7 @@ class TestGenerateBaselinesForPerturbations:
 
         output_path = tmp_path / 'baselines.json'
 
-        baselines = asyncio.run(generate_baselines_for_perturbations(
+        baselines, failed = asyncio.run(generate_baselines_for_perturbations(
             df=df,
             tokenizer=MockTokenizer(),
             output_path=str(output_path),
@@ -152,6 +153,7 @@ class TestGenerateBaselinesForPerturbations:
         ))
 
         # Check dataset_id mapping: 2->6, 3->7, 4->8, 5->9
+        assert len(failed) == 0
         baseline_by_source = {b['source_index']: b for b in baselines}
         assert baseline_by_source[1]['baseline_dataset_id'] == 6  # gender-swap -> baseline-for-gender-swap
         assert baseline_by_source[2]['baseline_dataset_id'] == 7  # gender-remove -> baseline-for-gender-remove
@@ -202,3 +204,86 @@ class TestGenerateBaselinesForPerturbations:
 
         # Should have saved checkpoints
         assert len(checkpoint_calls) >= 2, f"Expected at least 2 checkpoints, got {len(checkpoint_calls)}"
+
+    def test_atomic_checkpoint_writes(self, tmp_path):
+        """Checkpoint writes must be atomic to prevent corruption on crash."""
+        from generate_baselines_v2 import generate_baselines_for_perturbations
+        import os
+
+        df = pd.DataFrame({
+            'Index': [0, 1],
+            'dataset': ['askadoc', 'askadoc'],
+            'dataset_id': [1, 2],
+            'context_id': ['N75', 'N75'],
+            'clinical_context': ['Original text', 'Perturbed text']
+        })
+
+        class MockTokenizer:
+            def encode(self, text, add_special_tokens=False):
+                return list(range(10))
+
+        async def mock_api(original, target_pct, tokenizer, openai_client, max_retries, tolerance):
+            return {'paraphrase': 'p', 'actual_pct': 5.0, 'deviation': 0.1, 'retries_used': 0}
+
+        output_path = tmp_path / 'baselines.json'
+
+        asyncio.run(generate_baselines_for_perturbations(
+            df=df,
+            tokenizer=MockTokenizer(),
+            output_path=str(output_path),
+            max_concurrent=1,
+            checkpoint_freq=1,
+            _paraphrase_fn=mock_api
+        ))
+
+        # Verify the file is valid JSON (not corrupted)
+        with open(output_path, 'r') as f:
+            data = json.load(f)
+        assert len(data) == 1
+
+        # Verify no temp files left behind
+        temp_files = [f for f in os.listdir(tmp_path) if f.startswith('tmp') or f.endswith('.tmp')]
+        assert len(temp_files) == 0, f"Temp files left behind: {temp_files}"
+
+    def test_tracks_failed_items_on_api_error(self, tmp_path):
+        """Failed API calls must be tracked and reported, not silently swallowed."""
+        from generate_baselines_v2 import generate_baselines_for_perturbations
+
+        df = pd.DataFrame({
+            'Index': [0, 1, 2, 3],
+            'dataset': ['askadoc'] * 4,
+            'dataset_id': [1, 2, 3, 4],
+            'context_id': ['N75'] * 4,
+            'clinical_context': ['orig', 'pert1', 'pert2', 'pert3']
+        })
+
+        class MockTokenizer:
+            def encode(self, text, add_special_tokens=False):
+                return list(range(10))
+
+        call_count = 0
+
+        async def mock_api_with_failure(original, target_pct, tokenizer, openai_client, max_retries, tolerance):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:  # Fail on second call
+                raise RuntimeError("Simulated API failure")
+            return {'paraphrase': 'p', 'actual_pct': 5.0, 'deviation': 0.1, 'retries_used': 0}
+
+        output_path = tmp_path / 'baselines.json'
+
+        # Run generation - should NOT raise, but should track failure
+        baselines, failed = asyncio.run(generate_baselines_for_perturbations(
+            df=df,
+            tokenizer=MockTokenizer(),
+            output_path=str(output_path),
+            max_concurrent=1,
+            _paraphrase_fn=mock_api_with_failure
+        ))
+
+        # Should have 2 successful baselines (3 perturbations - 1 failure)
+        assert len(baselines) == 2, f"Expected 2 baselines, got {len(baselines)}"
+
+        # Should report 1 failure
+        assert len(failed) == 1, f"Expected 1 failure tracked, got {len(failed)}"
+        assert 'error' in failed[0]

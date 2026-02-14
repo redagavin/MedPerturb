@@ -99,7 +99,11 @@ def evaluate_baselines(
         checkpoint_df = pd.read_csv(checkpoint_path)
         # Explicit int() coercion for type safety (CSV can read as float/string)
         completed_indices = {int(idx) for idx in checkpoint_df['Index'].tolist()}
-        results = checkpoint_df.to_dict('records')  # Preserve existing results
+        results = checkpoint_df.to_dict('records')
+        trace_path = checkpoint_path.replace('.csv', '_trace.json')
+        if os.path.exists(trace_path):
+            with open(trace_path) as f:
+                trace_data = json.load(f)
         print(f"  Resuming from checkpoint: {len(completed_indices)} completed")
 
     # Evaluate

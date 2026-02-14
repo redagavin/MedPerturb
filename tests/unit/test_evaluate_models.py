@@ -114,6 +114,24 @@ class TestParseBinaryAnswer:
         answer, method = parse_binary_answer("yes", "Yes.")
         assert method == "extractor_text_match"
 
+    def test_layer2_both_yes_and_no_returns_first_match(self):
+        """When extractor output contains both 'yes' and 'no', 'yes' wins (checked first).
+
+        This documents a positional bias: the yes/1 regex is checked before no/0.
+        In practice this is rare since the extractor is asked to produce '0' or '1'.
+        """
+        from evaluate_models import parse_binary_answer
+        answer, method = parse_binary_answer("No, wait, yes", "unrelated")
+        assert answer == 1
+        assert method == "extractor_text_match"
+
+    def test_layer2_both_no_and_yes_still_returns_yes(self):
+        """Even when 'no' appears first textually, the regex check order determines result."""
+        from evaluate_models import parse_binary_answer
+        answer, method = parse_binary_answer("no yes", "unrelated")
+        assert answer == 1
+        assert method == "extractor_text_match"
+
 
 class TestChatTemplate:
     """Chat template must be applied before model/extractor inference."""

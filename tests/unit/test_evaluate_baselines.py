@@ -135,3 +135,24 @@ class TestTraceDataHandling:
         csv_path = 'checkpoints/baseline_eval_gpu0.csv'
         trace_path = csv_path.replace('.csv', '_trace.json')
         assert trace_path == 'checkpoints/baseline_eval_gpu0_trace.json'
+
+    def test_trace_data_reloaded_on_resume(self):
+        """Trace JSON must be reloaded on checkpoint resume so final save is complete.
+
+        Without this, a resumed run's trace JSON only contains entries from the
+        current session, missing all rows from previous sessions.
+        """
+        source_path = os.path.join(
+            '/scratch/yang.zih/cot_faithfulness/MedPerturb/code',
+            'evaluate_baselines.py'
+        )
+        with open(source_path) as f:
+            source = f.read()
+        # The checkpoint resume block must load trace JSON alongside CSV
+        assert 'trace.json' in source or '_trace.json' in source, (
+            "evaluate_baselines must reference trace JSON file"
+        )
+        # Must use json.load to reload trace data (not just json.dump to save)
+        assert source.count('json.load') >= 1, (
+            "evaluate_baselines must use json.load to reload trace data on resume"
+        )

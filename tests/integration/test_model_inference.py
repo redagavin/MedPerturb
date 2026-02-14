@@ -27,23 +27,30 @@ class TestModelInference:
         )
 
     def test_binary_extraction_returns_valid(self, evaluator):
-        """Binary answer extractor must return 0 or 1."""
+        """Binary answer extractor must return trace dict with valid binary answer."""
         result = evaluator._extract_binary_answer(
             "Yes, the patient should visit.", "VISIT"
         )
-        assert result in [0, 1], f"Expected 0 or 1, got {result}"
+        assert isinstance(result, dict), f"Expected dict, got {type(result)}"
+        assert result["answer"] in [0, 1], f"Expected 0 or 1, got {result['answer']}"
+        assert "extractor_output" in result
+        assert "extraction_method" in result
 
     def test_evaluate_triage_returns_correct_structure(self, evaluator):
-        """evaluate_triage must return dict with MANAGE/VISIT/RESOURCE keys."""
+        """evaluate_triage must return dict with MANAGE/VISIT/RESOURCE trace data."""
         sample_context = "A 45-year-old woman presents with mild headache for 2 days."
         results = evaluator.evaluate_triage(sample_context)
         for key in ["MANAGE", "VISIT", "RESOURCE"]:
             assert key in results, f"Missing key: {key}"
-            assert len(results[key]) == 3, (
-                f"{key} should have 3 responses (3 seeds), got {len(results[key])}"
+            trace = results[key]
+            assert len(trace["binary_answers"]) == 3, (
+                f"{key} should have 3 binary_answers (3 seeds), got {len(trace['binary_answers'])}"
             )
-            for val in results[key]:
+            for val in trace["binary_answers"]:
                 assert val in [0, 1], f"{key} response {val} is not binary"
+            assert len(trace["model_responses"]) == 3
+            assert len(trace["extractor_outputs"]) == 3
+            assert len(trace["extraction_methods"]) == 3
 
     def test_long_prompt_does_not_crash(self, evaluator):
         """max_new_tokens must handle prompts longer than 512 tokens without crashing."""

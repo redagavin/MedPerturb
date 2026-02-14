@@ -52,6 +52,31 @@ class TestModelInference:
             assert len(trace["extractor_outputs"]) == 3
             assert len(trace["extraction_methods"]) == 3
 
+    def test_chat_template_produces_instruction_following_response(self, evaluator):
+        """Chat template must make model follow instructions, not do raw completion.
+
+        Without apply_chat_template, the model treats the prompt as raw text
+        and continues it instead of answering the question.
+        """
+        prompt = "Answer with only 'yes' or 'no': Is the sky blue?"
+        response = evaluator._call_model(prompt, seed=42)
+        response_lower = response.lower()
+        assert "yes" in response_lower or "no" in response_lower, (
+            f"Model did not follow yes/no instruction. Response: {response[:200]}"
+        )
+
+    def test_extractor_produces_parseable_output(self, evaluator):
+        """Extractor with chat template must produce output parseable by extraction chain.
+
+        For a clear 'Yes' response, the extraction method should not fall through
+        to default — it should match at integer_parse or extractor_text_match.
+        """
+        result = evaluator._extract_binary_answer("Yes", "VISIT")
+        assert result["extraction_method"] != "default", (
+            f"Extractor fell through to default for clear 'Yes' input. "
+            f"Extractor output: '{result['extractor_output']}'"
+        )
+
     def test_long_prompt_does_not_crash(self, evaluator):
         """max_new_tokens must handle prompts longer than 512 tokens without crashing."""
         long_context = "The patient reports: " + " ".join(["symptom"] * 300)

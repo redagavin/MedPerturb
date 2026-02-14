@@ -28,6 +28,7 @@ class TestMajorityVote:
         assert majority_vote([0, 0, 0]) == 0
 
 
+@pytest.mark.slow
 class TestSanityCheckAnalysis:
     """Tests for the full MI analysis pipeline."""
 

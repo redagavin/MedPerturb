@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import random
 import torch
 import openai
@@ -10,6 +11,48 @@ from utils import (
     load_openai_token,
     setup_logging
 )
+
+def parse_binary_answer(extractor_output, model_response):
+    """Parse binary answer from extractor output with fallback to model response.
+
+    Four-layer extraction chain:
+    1. Integer parse on extractor output
+    2. Word-boundary regex on extractor output (yes/no/1/0)
+    3. Word-boundary regex on model response (yes/no)
+    4. Default to 0
+
+    Args:
+        extractor_output: Raw text from LLM extractor
+        model_response: Original model response
+
+    Returns:
+        tuple[int, str]: (binary_answer, extraction_method)
+    """
+    # Layer 1: Integer parse
+    try:
+        value = int(extractor_output.strip())
+        if value in (0, 1):
+            return value, "integer_parse"
+    except (ValueError, AttributeError):
+        pass
+
+    # Layer 2: Word-boundary regex on extractor output
+    ext_lower = extractor_output.lower()
+    if re.search(r'\b(yes|1)\b', ext_lower):
+        return 1, "extractor_text_match"
+    if re.search(r'\b(no|0)\b', ext_lower):
+        return 0, "extractor_text_match"
+
+    # Layer 3: Word-boundary regex on model response
+    resp_lower = model_response.lower()
+    if re.search(r'\byes\b', resp_lower):
+        return 1, "model_response_regex"
+    if re.search(r'\bno\b', resp_lower):
+        return 0, "model_response_regex"
+
+    # Layer 4: Default
+    return 0, "default"
+
 
 class ModelEvaluator:
     def __init__(self, model_name: str):

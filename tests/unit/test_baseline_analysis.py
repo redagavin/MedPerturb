@@ -5,7 +5,7 @@ import pytest
 import numpy as np
 import pandas as pd
 import sys
-sys.path.insert(0, '/scratch/yang.zih/cot_faithfulness/MedPerturb/.worktrees/calibrated-baselines/case_studies')
+sys.path.insert(0, '/scratch/yang.zih/cot_faithfulness/MedPerturb/case_studies')
 
 
 class TestMutualInformation:
@@ -104,3 +104,46 @@ class TestBootstrapMITest:
         result = bootstrap_mi_test(orig, pert, base, n_bootstrap=100)
 
         assert 0 <= result['p_value'] <= 1
+
+
+class TestConversationalFilter:
+    """baseline_analysis must exclude conversational rows."""
+
+    def test_run_analysis_excludes_conversational(self, tmp_path):
+        """Conversational rows must be excluded to prevent alignment contamination.
+
+        Conversational data is a format perturbation, not a gender/uncertainty/etc.
+        perturbation. Including it mixes perturbation types in the MI analysis.
+        """
+        from baseline_analysis import run_analysis
+
+        rows = []
+        # 5 non-conversational samples for gender_swap (did=1,2,6)
+        for i in range(5):
+            for did in [1, 2, 6]:
+                rows.append({
+                    'dataset': 'askadoc', 'dataset_id': did, 'context_id': f'N{i}',
+                    'LLAMA3_MANAGE': 1, 'LLAMA3_VISIT': 0, 'LLAMA3_RESOURCE': 1,
+                    'LLAMA3-70_MANAGE': 1, 'LLAMA3-70_VISIT': 0, 'LLAMA3-70_RESOURCE': 1,
+                })
+        # 1 conversational sample (should be excluded)
+        for did in [1, 2, 6]:
+            rows.append({
+                'dataset': 'conversational', 'dataset_id': did, 'context_id': '211',
+                'LLAMA3_MANAGE': 0, 'LLAMA3_VISIT': 0, 'LLAMA3_RESOURCE': 0,
+                'LLAMA3-70_MANAGE': 0, 'LLAMA3-70_VISIT': 0, 'LLAMA3-70_RESOURCE': 0,
+            })
+
+        csv_path = str(tmp_path / 'test.csv')
+        pd.DataFrame(rows).to_csv(csv_path, index=False)
+
+        output_path = str(tmp_path / 'output.xlsx')
+        run_analysis(csv_path, output_path)
+
+        results = pd.read_excel(output_path)
+        gs = results[results['perturbation_type'] == 'gender_swap']
+        for _, row in gs.iterrows():
+            assert row['n_cases'] == 5, (
+                f"Expected 5 cases but got {int(row['n_cases'])}. "
+                "Conversational rows may not be filtered."
+            )

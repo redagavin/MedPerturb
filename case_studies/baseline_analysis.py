@@ -106,6 +106,7 @@ def run_analysis(dataset_path: str, output_path: str):
         output_path: Path for output Excel file
     """
     df = pd.read_csv(dataset_path)
+    df = df[df['dataset'] != 'conversational']
 
     # Mapping
     perturbation_types = {

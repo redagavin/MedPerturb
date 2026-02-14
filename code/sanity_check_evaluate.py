@@ -4,6 +4,8 @@
 import os
 import json
 import pickle
+import shutil
+import tempfile
 import time
 import argparse
 
@@ -109,13 +111,16 @@ def evaluate_sanity_check_sample(evaluator, sample):
 
 
 def save_checkpoint(checkpoint_path, results, completed_context_ids):
-    """Save checkpoint to disk."""
+    """Save checkpoint to disk atomically to prevent corruption on crash."""
     checkpoint_data = {
         'results': results,
         'completed_context_ids': list(completed_context_ids)
     }
-    with open(checkpoint_path, 'wb') as f:
+    dir_path = os.path.dirname(checkpoint_path) or '.'
+    with tempfile.NamedTemporaryFile('wb', delete=False, dir=dir_path, suffix='.tmp') as f:
         pickle.dump(checkpoint_data, f)
+        temp_path = f.name
+    shutil.move(temp_path, checkpoint_path)
 
 
 def load_checkpoint(checkpoint_path):

@@ -53,7 +53,7 @@ async def generate_baselines_for_perturbations(
     openai_client=None,
     max_concurrent: int = 300,
     checkpoint_freq: int = 10,
-    max_retries: int = 10,
+    max_retries: int = 50,
     tolerance: float = 0.5,
     _paraphrase_fn=None
 ) -> list:

@@ -132,6 +132,46 @@ class TestParseBinaryAnswer:
         assert answer == 1
         assert method == "extractor_text_match"
 
+    # Layer 2a: Explicit conclusion pattern overrides generic search
+    def test_conclusion_pattern_overrides_generic_yes(self):
+        """When extractor mentions 'yes' in explanation but concludes 'binary answer is 0',
+        the explicit conclusion must win."""
+        from evaluate_models import parse_binary_answer
+        extractor = (
+            "The response does not explicitly state 'yes' or 'no' to the question. "
+            "However, it can be inferred that the response is not a direct 'yes'. "
+            "Therefore, the binary answer is 0."
+        )
+        answer, method = parse_binary_answer(extractor, "I cannot provide medical advice.")
+        assert answer == 0
+        assert method == "extractor_text_match"
+
+    def test_conclusion_pattern_finds_explicit_1(self):
+        """Explicit 'binary answer is: 1' is correctly extracted."""
+        from evaluate_models import parse_binary_answer
+        answer, method = parse_binary_answer("The binary answer is: 1", "Yes")
+        assert answer == 1
+        assert method == "extractor_text_match"
+
+    def test_multiple_conclusions_last_wins(self):
+        """When extractor analyzes multiple sub-questions, the last conclusion is used."""
+        from evaluate_models import parse_binary_answer
+        extractor = (
+            "A. Yes - the binary answer is 1.\n"
+            "B. Yes - the binary answer is 1.\n"
+            "C. No - the binary answer is 0."
+        )
+        answer, method = parse_binary_answer(extractor, "A. Yes B. Yes C. No")
+        assert answer == 0
+        assert method == "extractor_text_match"
+
+    def test_generic_search_when_no_conclusion_pattern(self):
+        """When no 'binary answer' pattern exists, generic yes/no search still works."""
+        from evaluate_models import parse_binary_answer
+        answer, method = parse_binary_answer("The answer is yes.", "unrelated")
+        assert answer == 1
+        assert method == "extractor_text_match"
+
 
 class TestChatTemplate:
     """Chat template must be applied before model/extractor inference."""

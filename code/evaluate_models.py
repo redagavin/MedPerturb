@@ -15,9 +15,10 @@ from utils import (
 def parse_binary_answer(extractor_output, model_response):
     """Parse binary answer from extractor output with fallback to model response.
 
-    Four-layer extraction chain:
+    Five-layer extraction chain:
     1. Integer parse on extractor output
-    2. Word-boundary regex on extractor output (yes/no/1/0)
+    2a. Explicit "binary answer" conclusion pattern (last match wins)
+    2b. Word-boundary regex on extractor output (yes/no/1/0)
     3. Word-boundary regex on model response (yes/no)
     4. Default to 0
 
@@ -36,8 +37,13 @@ def parse_binary_answer(extractor_output, model_response):
     except (ValueError, AttributeError):
         pass
 
-    # Layer 2: Word-boundary regex on extractor output
+    # Layer 2a: Explicit conclusion pattern (last match wins)
     ext_lower = extractor_output.lower()
+    conclusion_matches = re.findall(r'binary answer[s]?\s*(?:is|are)?[:\s]*([01])', ext_lower)
+    if conclusion_matches:
+        return int(conclusion_matches[-1]), "extractor_text_match"
+
+    # Layer 2b: Word-boundary regex on extractor output
     if re.search(r'\b(yes|1)\b', ext_lower):
         return 1, "extractor_text_match"
     if re.search(r'\b(no|0)\b', ext_lower):

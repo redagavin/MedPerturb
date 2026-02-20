@@ -35,7 +35,8 @@ class TestMutualInformation:
         """MI must always be non-negative."""
         from neutral_baseline_analysis import calculate_mi
 
-        for _ in range(10):
+        for seed in range(10):
+            np.random.seed(seed)
             x = pd.Series(np.random.randint(0, 2, 100))
             y = pd.Series(np.random.randint(0, 2, 100))
             mi = calculate_mi(x, y)

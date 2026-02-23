@@ -202,9 +202,10 @@ echo "======================================"
 echo "STEP 4: Run Analysis"
 echo "======================================"
 
-python case_studies/neutral_baseline_analysis.py \
-    --dataset data_with_neutral_baseline.csv \
-    --output results/neutral_baseline_analysis.xlsx
+srun --partition=frink --cpus-per-task=4 --mem=32G --time=1:00:00 \
+    bash -c "source ~/.bashrc && conda activate cot && python case_studies/neutral_baseline_analysis.py \
+        --dataset data_with_neutral_baseline.csv \
+        --output results/neutral_baseline_analysis.xlsx"
 
 echo ""
 echo "======================================"

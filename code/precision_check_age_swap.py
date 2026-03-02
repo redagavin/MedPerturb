@@ -70,7 +70,7 @@ def extract_age(text):
         if pat_type == 'paren_gender':
             age = int(match.group(1))
             if MIN_AGE <= age <= MAX_AGE:
-                return (age, str(age))
+                return (age, match.group(0))
 
         if pat_type == 'compact_gender':
             age = int(match.group(1))
@@ -126,6 +126,12 @@ def replace_age(text, matched_string, new_age):
     # Decade format: "late 30s" / "early 20s" -> just the number
     if re.match(r'(?:late|early|mid)\s+\d0s', matched_string):
         return text.replace(matched_string, str(new_age), 1)
+
+    # Paren gender format: "26(M)" -> "65(M)"
+    paren_match = re.match(r'^(\d+)\(([MF])\)$', matched_string)
+    if paren_match:
+        gender_char = paren_match.group(2)
+        return text.replace(matched_string, f"{new_age}({gender_char})", 1)
 
     # Compact gender format: "28M" -> "65M", "25 M" -> "65 M"
     compact_match = re.match(r'^(\d+)(\s?)([MF])$', matched_string)

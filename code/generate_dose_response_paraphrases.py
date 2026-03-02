@@ -134,3 +134,64 @@ async def generate_paraphrases(
         atomic_save(results, output_path)
 
     return results
+
+
+if __name__ == "__main__":
+    import argparse
+    from transformers import AutoTokenizer
+    from tqdm.asyncio import tqdm as atqdm
+
+    parser = argparse.ArgumentParser(
+        description="Generate dose-response paraphrases at multiple token change levels"
+    )
+    parser.add_argument('--dataset', type=str, default='data.csv',
+                        help='Path to data.csv')
+    parser.add_argument('--output', type=str,
+                        default='results/dose_response_paraphrases.json',
+                        help='Output JSON path')
+    parser.add_argument('--model', type=str,
+                        default='meta-llama/Llama-3.1-8B-Instruct',
+                        help='Model for tokenizer')
+    parser.add_argument('--targets', type=str, default='5,10,20,40,60',
+                        help='Comma-separated target token change percentages')
+    parser.add_argument('--max_concurrent', type=int, default=300,
+                        help='Maximum concurrent API requests')
+    parser.add_argument('--checkpoint_freq', type=int, default=10,
+                        help='Save checkpoint every N paraphrases')
+    parser.add_argument('--sample_size', type=int, default=None,
+                        help='Limit samples for testing')
+
+    args = parser.parse_args()
+
+    targets = [float(t) for t in args.targets.split(',')]
+
+    print(f"Loading tokenizer: {args.model}")
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
+
+    print(f"Loading dataset: {args.dataset}")
+    df = pd.read_csv(args.dataset)
+    samples = load_samples(df)
+    print(f"  {len(samples)} non-conversational original samples")
+
+    if args.sample_size:
+        samples = samples[:args.sample_size]
+        print(f"  Limited to {len(samples)} samples (test mode)")
+
+    print(f"Targets: {targets}")
+    print(f"Total paraphrases: {len(samples) * len(targets)}")
+
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI()
+
+    results = asyncio.run(generate_paraphrases(
+        samples=samples,
+        targets=targets,
+        tokenizer=tokenizer,
+        openai_client=client,
+        output_path=args.output,
+        max_concurrent=args.max_concurrent,
+        checkpoint_freq=args.checkpoint_freq,
+    ))
+
+    print(f"\nDone! Generated {len(results)} paraphrases")
+    print(f"Saved to: {args.output}")

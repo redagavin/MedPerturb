@@ -58,32 +58,32 @@ def extract_age(text):
                 age = decade + 7
             else:  # mid
                 age = decade + 5
-            return (age, decade_str)
+            if MIN_AGE <= age <= MAX_AGE:
+                return (age, decade_str)
 
-        if pat_type == 'year_old':
+        elif pat_type == 'year_old':
             full_match = match.group(0)
             age_str = re.match(r'(\d+)', full_match).group(1)
             age = int(age_str)
             if MIN_AGE <= age <= MAX_AGE:
                 return (age, full_match)
 
-        if pat_type == 'paren_gender':
+        elif pat_type == 'paren_gender':
             age = int(match.group(1))
             if MIN_AGE <= age <= MAX_AGE:
                 return (age, match.group(0))
 
-        if pat_type == 'compact_gender':
+        elif pat_type == 'compact_gender':
             age = int(match.group(1))
             if MIN_AGE <= age <= MAX_AGE:
-                # Full match includes digit + optional space + M/F (e.g., "28M" or "25 M")
                 return (age, match.group(0))
 
-        if pat_type == 'age_equals':
+        elif pat_type == 'age_equals':
             age = int(match.group(1))
             if MIN_AGE <= age <= MAX_AGE:
                 return (age, match.group(1))
 
-        if pat_type in ('gender_comma_age', 'age_gender', 'im_age'):
+        elif pat_type in ('gender_comma_age', 'age_gender', 'im_age'):
             age = int(match.group(1))
             if MIN_AGE <= age <= MAX_AGE:
                 return (age, match.group(1))

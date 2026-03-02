@@ -1,9 +1,15 @@
 # ABOUTME: Age bracket swap for precision sanity check
 # ABOUTME: Extracts and replaces patient age in clinical text across 9+ formats
 
+import os
 import re
+import sys
+import json
 import random
 import hashlib
+import argparse
+
+import pandas as pd
 
 
 # Ordered by specificity — most specific patterns first to avoid partial matches
@@ -160,3 +166,113 @@ def context_id_to_seed(context_id):
         int: Positive integer seed
     """
     return int(hashlib.md5(context_id.encode()).hexdigest(), 16) % (2**31)
+
+
+def run_age_swap(dataset_path, tokenizer=None):
+    """Apply age bracket swap to all original non-conversational samples.
+
+    Args:
+        dataset_path: Path to data_with_baselines.csv
+        tokenizer: Optional HuggingFace tokenizer for token edit distance
+
+    Returns:
+        list of dicts with keys: context_id, dataset, original_text,
+            age_swapped_text, original_age, new_age, token_change_pct,
+            age_extraction_failed
+    """
+    # Late import to avoid requiring src/ in path at module load time
+    if tokenizer is not None:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
+        from token_edit_distance import token_edit_distance_percent
+
+    df = pd.read_csv(dataset_path)
+    df = df[df['dataset'] != 'conversational']
+    df = df[df['dataset_id'] == 1]
+
+    results = []
+    for _, row in df.iterrows():
+        context_id = row['context_id']
+        text = row['clinical_context']
+        dataset = row['dataset']
+
+        extraction = extract_age(text)
+
+        if extraction is None:
+            results.append({
+                'context_id': context_id,
+                'dataset': dataset,
+                'original_text': text,
+                'age_swapped_text': None,
+                'original_age': None,
+                'new_age': None,
+                'token_change_pct': None,
+                'age_extraction_failed': True,
+            })
+            continue
+
+        original_age, matched_string = extraction
+        seed = context_id_to_seed(context_id)
+        new_age = compute_target_age(original_age, seed)
+        swapped_text = replace_age(text, matched_string, new_age)
+
+        token_change_pct = None
+        if tokenizer is not None:
+            token_change_pct = token_edit_distance_percent(text, swapped_text, tokenizer)
+
+        results.append({
+            'context_id': context_id,
+            'dataset': dataset,
+            'original_text': text,
+            'age_swapped_text': swapped_text,
+            'original_age': original_age,
+            'new_age': new_age,
+            'token_change_pct': token_change_pct,
+            'age_extraction_failed': False,
+        })
+
+    return results
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Age bracket swap for precision sanity check")
+    parser.add_argument('--dataset', type=str, default='data_with_baselines.csv',
+                        help='Path to data_with_baselines.csv')
+    parser.add_argument('--output', type=str, default='results/precision_check_age_swap.json',
+                        help='Output JSON path')
+    parser.add_argument('--model', type=str, default='meta-llama/Llama-3.1-8B-Instruct',
+                        help='Model for tokenizer (token edit distance)')
+    args = parser.parse_args()
+
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
+
+    results = run_age_swap(args.dataset, tokenizer=tokenizer)
+
+    # Print stats
+    total = len(results)
+    failed = sum(1 for r in results if r['age_extraction_failed'])
+    successful = total - failed
+    print(f"Total samples: {total}")
+    print(f"Successful age swaps: {successful}")
+    print(f"Failed age extraction: {failed}")
+
+    if successful > 0:
+        pcts = [r['token_change_pct'] for r in results if r['token_change_pct'] is not None]
+        if pcts:
+            print(f"Token change %: mean={sum(pcts)/len(pcts):.2f}, "
+                  f"min={min(pcts):.2f}, max={max(pcts):.2f}")
+
+    # Save JSON (exclude original_text to save space — can re-join by context_id)
+    output_records = []
+    for r in results:
+        record = {k: v for k, v in r.items() if k != 'original_text'}
+        output_records.append(record)
+
+    os.makedirs(os.path.dirname(args.output) or '.', exist_ok=True)
+    with open(args.output, 'w') as f:
+        json.dump(output_records, f, indent=2)
+    print(f"Saved to {args.output}")
+
+
+if __name__ == '__main__':
+    main()

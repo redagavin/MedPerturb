@@ -44,10 +44,35 @@ conda activate cot
 mkdir -p results logs checkpoints/precision_check
 
 # ==========================================
-# STEP 1: Run Evaluation
+# STEP 1: Generate Calibrated Baselines
 # ==========================================
 echo "======================================"
-echo "STEP 1: Age Swap Evaluation"
+echo "STEP 1: Generate Calibrated Baselines"
+echo "======================================"
+
+BASELINES_PATH="results/precision_check_baselines.json"
+AGE_SWAP_PATH="results/precision_check_age_swap.json"
+
+if [ -f "${BASELINES_PATH}" ]; then
+    BASELINE_COUNT=$(python -c "import json; print(len(json.load(open('${BASELINES_PATH}'))))")
+    echo "Baselines file exists with ${BASELINE_COUNT} entries (will resume if incomplete)"
+fi
+
+python code/precision_check_baselines.py \
+    --age_swap "${AGE_SWAP_PATH}" \
+    --dataset data_with_baselines.csv \
+    --output "${BASELINES_PATH}" \
+    --model "${MODEL}"
+
+BASELINE_COUNT=$(python -c "import json; print(len(json.load(open('${BASELINES_PATH}'))))")
+echo "Baselines complete: ${BASELINE_COUNT} entries"
+echo ""
+
+# ==========================================
+# STEP 2: Run Evaluation
+# ==========================================
+echo "======================================"
+echo "STEP 2: Age Swap Evaluation"
 echo "======================================"
 
 if [ "$TEST_MODE" = true ]; then
@@ -112,10 +137,10 @@ else
 fi
 
 # ==========================================
-# STEP 2: Merge Results
+# STEP 3: Merge Results
 # ==========================================
 echo "======================================"
-echo "STEP 2: Merge Results"
+echo "STEP 3: Merge Results"
 echo "======================================"
 
 if [ "$TEST_MODE" = true ]; then
@@ -152,10 +177,10 @@ EOF
 fi
 
 # ==========================================
-# STEP 3: Run Analysis
+# STEP 4: Run Analysis
 # ==========================================
 echo "======================================"
-echo "STEP 3: Precision Check Analysis"
+echo "STEP 4: Precision Check Analysis"
 echo "======================================"
 
 python case_studies/precision_check_analysis.py \

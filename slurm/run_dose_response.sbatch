@@ -30,17 +30,19 @@ source ~/.bashrc
 conda activate cot
 
 MODEL=${1:-"meta-llama/Llama-3.1-8B-Instruct"}
+MODEL_SHORT=$(echo "${MODEL}" | sed 's/.*\///' | tr '[:upper:]' '[:lower:]' | tr '-' '_')
 
 echo "Model: ${MODEL}"
+echo "Model short: ${MODEL_SHORT}"
 echo ""
 
-cd ${MEDPERTURB_DIR}
+cd "${MEDPERTURB_DIR}"
 
 python code/dose_response_evaluate.py \
     --model "${MODEL}" \
     --paraphrases "results/dose_response_paraphrases.json" \
     --dataset "data.csv" \
-    --output "results/dose_response_eval_${SLURM_ARRAY_TASK_ID}.json" \
+    --output "results/dose_response_eval_${MODEL_SHORT}_${SLURM_ARRAY_TASK_ID}.json" \
     --checkpoint_dir "checkpoints/dose_response" \
     --checkpoint_freq 5
 

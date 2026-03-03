@@ -80,10 +80,15 @@ async def generate_paraphrases(
     results = []
     completed_keys = set()
     if output_path and os.path.exists(output_path):
-        with open(output_path, 'r') as f:
-            results = json.load(f)
-        completed_keys = {(r['context_id'], r['target_pct']) for r in results}
-        print(f"  Resuming: {len(results)} paraphrases already generated")
+        try:
+            with open(output_path, 'r') as f:
+                results = json.load(f)
+            completed_keys = {(r['context_id'], r['target_pct']) for r in results}
+            print(f"  Resuming: {len(results)} paraphrases already generated")
+        except (json.JSONDecodeError, KeyError) as e:
+            print(f"  WARNING: Corrupt checkpoint {output_path}: {e}. Starting fresh.")
+            results = []
+            completed_keys = set()
 
     results_lock = asyncio.Lock()
     semaphore = asyncio.Semaphore(max_concurrent)

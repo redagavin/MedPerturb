@@ -162,7 +162,8 @@ import os
 import shutil
 import tempfile
 
-result_files = glob.glob('results/dose_response_eval_*.json')
+model_short = os.environ.get('MODEL_SHORT', 'llama_3.1_8b_instruct')
+result_files = glob.glob(f'results/dose_response_eval_{model_short}_*.json')
 result_files = [f for f in result_files if 'test' not in f]
 
 print(f"Found {len(result_files)} result files")
@@ -178,7 +179,6 @@ for f in sorted(result_files):
             seen_ids.add(cid)
             merged.append(item)
 
-model_short = os.environ.get('MODEL_SHORT', 'llama_3.1_8b_instruct')
 output = f'results/dose_response_evaluation_{model_short}.json'
 with tempfile.NamedTemporaryFile('w', delete=False, dir='results', suffix='.tmp') as f:
     json.dump(merged, f, indent=2)

@@ -170,11 +170,15 @@ def atomic_json_save(data, path):
 
 
 def load_checkpoint(checkpoint_path):
-    """Load checkpoint from disk."""
+    """Load checkpoint from disk. Falls back to empty state on corruption."""
     if not os.path.exists(checkpoint_path):
         return [], set()
-    with open(checkpoint_path, 'rb') as f:
-        data = pickle.load(f)
+    try:
+        with open(checkpoint_path, 'rb') as f:
+            data = pickle.load(f)
+    except (pickle.UnpicklingError, EOFError, Exception) as e:
+        print(f"WARNING: Corrupt checkpoint {checkpoint_path}: {e}. Starting fresh.")
+        return [], set()
     results = data.get('results', [])
     completed = set(data.get('completed_context_ids', []))
     return results, completed

@@ -50,7 +50,8 @@ def extract_age(text):
         text: Clinical context string
 
     Returns:
-        tuple: (age_int, matched_string) or None if no age found
+        tuple: (age_int, matched_string, match_start) or None if no age found.
+            match_start is the character offset of matched_string in text.
     """
     for pattern, pat_type in AGE_PATTERNS:
         match = re.search(pattern, text)
@@ -68,39 +69,39 @@ def extract_age(text):
             else:  # mid
                 age = decade + 5
             if MIN_AGE <= age <= MAX_AGE:
-                return (age, decade_str)
+                return (age, decade_str, match.start(1))
 
         elif pat_type == 'year_old':
             full_match = match.group(0)
             age_str = re.match(r'(\d+)', full_match).group(1)
             age = int(age_str)
             if MIN_AGE <= age <= MAX_AGE:
-                return (age, full_match)
+                return (age, full_match, match.start())
 
         elif pat_type == 'paren_gender':
             age = int(match.group(1))
             if MIN_AGE <= age <= MAX_AGE:
-                return (age, match.group(0))
+                return (age, match.group(0), match.start())
 
         elif pat_type == 'gender_prefix':
             age = int(match.group(2))
             if MIN_AGE <= age <= MAX_AGE:
-                return (age, match.group(0))
+                return (age, match.group(0), match.start())
 
         elif pat_type == 'compact_gender':
             age = int(match.group(1))
             if MIN_AGE <= age <= MAX_AGE:
-                return (age, match.group(0))
+                return (age, match.group(0), match.start())
 
         elif pat_type == 'age_equals':
             age = int(match.group(1))
             if MIN_AGE <= age <= MAX_AGE:
-                return (age, match.group(1))
+                return (age, match.group(1), match.start(1))
 
         elif pat_type in ('gender_comma_age', 'age_gender', 'im_age'):
             age = int(match.group(1))
             if MIN_AGE <= age <= MAX_AGE:
-                return (age, match.group(1))
+                return (age, match.group(1), match.start(1))
 
     return None
 
@@ -126,13 +127,16 @@ def compute_target_age(original_age, seed):
         return rng.randint(18, 35)
 
 
-def replace_age(text, matched_string, new_age):
+def replace_age(text, matched_string, new_age, match_start=None):
     """Replace the matched age string with new age, preserving format.
 
     Args:
         text: Original clinical text
         matched_string: The exact string matched by extract_age
         new_age: Integer target age
+        match_start: Character offset of matched_string in text (from extract_age).
+            Used for positional replacement when matched_string is a bare number
+            that could appear elsewhere in the text.
 
     Returns:
         str: Text with age replaced
@@ -166,7 +170,10 @@ def replace_age(text, matched_string, new_age):
         suffix = year_old_match.group(2)
         return text.replace(matched_string, f"{new_age}{suffix}", 1)
 
-    # Numeric only: replace the number in context
+    # Numeric only: positional replacement to avoid replacing wrong occurrence
+    if match_start is not None:
+        end = match_start + len(matched_string)
+        return text[:match_start] + str(new_age) + text[end:]
     return text.replace(matched_string, str(new_age), 1)
 
 
@@ -224,10 +231,10 @@ def run_age_swap(dataset_path, tokenizer=None):
             })
             continue
 
-        original_age, matched_string = extraction
+        original_age, matched_string, match_start = extraction
         seed = context_id_to_seed(context_id)
         new_age = compute_target_age(original_age, seed)
-        swapped_text = replace_age(text, matched_string, new_age)
+        swapped_text = replace_age(text, matched_string, new_age, match_start=match_start)
 
         token_change_pct = None
         if tokenizer is not None:

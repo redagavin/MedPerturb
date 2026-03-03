@@ -72,8 +72,8 @@ def load_precision_check_data(dataset_path, age_swap_path, baseline_path):
         baseline_data = json.load(f)
     baselines = {s['context_id']: s['paraphrase'] for s in baseline_data}
 
-    # Three-way intersection
-    common = set(originals.keys()) & set(age_swaps.keys()) & set(baselines.keys())
+    # Three-way intersection (sorted for deterministic SLURM sharding across restarts)
+    common = sorted(set(originals.keys()) & set(age_swaps.keys()) & set(baselines.keys()))
 
     samples = []
     for cid in common:

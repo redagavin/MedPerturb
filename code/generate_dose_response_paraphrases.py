@@ -5,9 +5,12 @@ import asyncio
 import json
 import os
 import shutil
+import sys
 import tempfile
 
 import pandas as pd
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 
 def load_samples(df):

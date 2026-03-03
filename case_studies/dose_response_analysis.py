@@ -45,6 +45,8 @@ def bootstrap_flip_rate_se(orig_votes, para_votes, n_bootstrap=1000):
         float: Standard error of flip rate
     """
     n = len(orig_votes)
+    if n == 0:
+        return 0.0
     orig_arr = np.array(orig_votes)
     para_arr = np.array(para_votes)
     rates = []
@@ -199,6 +201,8 @@ def bootstrap_mi_se(x, y, n_bootstrap=1000):
         float: Standard error of MI
     """
     n = len(x)
+    if n == 0:
+        return 0.0
     x_arr = np.array(x)
     y_arr = np.array(y)
     mis = []

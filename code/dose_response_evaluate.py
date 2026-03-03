@@ -158,6 +158,16 @@ def save_checkpoint(checkpoint_path, results, completed_context_ids):
     shutil.move(temp_path, checkpoint_path)
 
 
+def atomic_json_save(data, path):
+    """Write JSON atomically to prevent corruption on crash."""
+    dir_path = os.path.dirname(path) or '.'
+    os.makedirs(dir_path, exist_ok=True)
+    with tempfile.NamedTemporaryFile('w', delete=False, dir=dir_path, suffix='.tmp') as f:
+        json.dump(data, f, indent=2)
+        temp_path = f.name
+    shutil.move(temp_path, path)
+
+
 def load_checkpoint(checkpoint_path):
     """Load checkpoint from disk."""
     if not os.path.exists(checkpoint_path):
@@ -167,6 +177,20 @@ def load_checkpoint(checkpoint_path):
     results = data.get('results', [])
     completed = set(data.get('completed_context_ids', []))
     return results, completed
+
+
+def resolve_gpu_params(args):
+    """Resolve GPU ID and total from SLURM environment or CLI defaults.
+
+    SLURM_ARRAY_TASK_ID/COUNT override --gpu_id/--total_gpus.
+    Falls back to gpu_id=0 if neither is set.
+    """
+    if 'SLURM_ARRAY_TASK_ID' in os.environ:
+        args.gpu_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+        args.total_gpus = int(os.environ['SLURM_ARRAY_TASK_COUNT'])
+    elif args.gpu_id is None:
+        args.gpu_id = 0
+    return args
 
 
 def main():
@@ -187,14 +211,10 @@ def main():
                         help='Limit samples for testing')
 
     args = parser.parse_args()
+    args = resolve_gpu_params(args)
 
-    # Auto-detect SLURM array job
     if 'SLURM_ARRAY_TASK_ID' in os.environ:
-        args.gpu_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-        args.total_gpus = int(os.environ['SLURM_ARRAY_TASK_COUNT'])
         print(f"Detected SLURM array job: GPU {args.gpu_id} of {args.total_gpus}")
-    elif args.gpu_id is None:
-        args.gpu_id = 0
 
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     model_short = args.model.split('/')[-1].lower().replace('-', '_')
@@ -239,8 +259,7 @@ def main():
             save_checkpoint(checkpoint_path, results, completed)
 
     save_checkpoint(checkpoint_path, results, completed)
-    with open(args.output, 'w') as f:
-        json.dump(results, f, indent=2)
+    atomic_json_save(results, args.output)
     print(f"\nResults saved to: {args.output}")
 
     marker = (f"{args.checkpoint_dir}/{model_short}_gpu{args.gpu_id}"

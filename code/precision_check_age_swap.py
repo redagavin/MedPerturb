@@ -18,10 +18,12 @@ AGE_PATTERNS = [
     (r'\b((?:late|early|mid)\s+\d0s)\b', 'decade'),
     # "19 year(s) old" / "19-year-old" / "19 year-old"
     (r'\b(\d{1,3}\s*-?\s*years?\s*-?\s*old)\b', 'year_old'),
-    # "26(M)" / "26(F)" paren format — must come before compact_gender
-    (r'\b(\d{1,3})\(([MF])\)', 'paren_gender'),
-    # "28M" / "35F" / "25 M" compact (digit optionally followed by space then M/F)
-    (r'\b(\d{1,3})(\s?)([MF])\b', 'compact_gender'),
+    # "26(M)" / "26(f)" paren format — must come before compact_gender
+    (r'\b(\d{1,3})\(([MFmf])\)', 'paren_gender'),
+    # "F24" / "M17" / "m17" — gender letter before digits
+    (r'\b([MFmf])(\d{1,3})\b', 'gender_prefix'),
+    # "28M" / "35f" / "25 M" compact (digit optionally followed by space then M/F/m/f)
+    (r'\b(\d{1,3})(\s?)([MFmf])\b', 'compact_gender'),
     # "Age = 28" format (may be followed by M/F)
     (r'[Aa]ge\s*[=:]\s*(\d{1,3})', 'age_equals'),
     # "Female, 23" / "Male, 45" — gender then comma then age
@@ -32,8 +34,9 @@ AGE_PATTERNS = [
     (r"(?:I'?m|I am)\s+(?:a\s+)?(\d{1,3})\b", 'im_age'),
 ]
 
-# Minimum plausible patient age (avoids matching lab values, dosages, etc.)
-MIN_AGE = 10
+# Minimum plausible patient age — patterns require gender/age context, so
+# low ages (e.g. 3M, 7 year old) are real pediatric patients, not noise
+MIN_AGE = 1
 MAX_AGE = 110
 
 
@@ -41,7 +44,7 @@ def extract_age(text):
     """Extract patient age from clinical text.
 
     Tries patterns in order of specificity, returning the first match
-    with a plausible age value (10-110).
+    with a plausible age value (1-110).
 
     Args:
         text: Clinical context string
@@ -76,6 +79,11 @@ def extract_age(text):
 
         elif pat_type == 'paren_gender':
             age = int(match.group(1))
+            if MIN_AGE <= age <= MAX_AGE:
+                return (age, match.group(0))
+
+        elif pat_type == 'gender_prefix':
+            age = int(match.group(2))
             if MIN_AGE <= age <= MAX_AGE:
                 return (age, match.group(0))
 
@@ -133,14 +141,20 @@ def replace_age(text, matched_string, new_age):
     if re.match(r'(?:late|early|mid)\s+\d0s', matched_string):
         return text.replace(matched_string, str(new_age), 1)
 
-    # Paren gender format: "26(M)" -> "65(M)"
-    paren_match = re.match(r'^(\d+)\(([MF])\)$', matched_string)
+    # Paren gender format: "26(M)" / "26(f)" -> "65(M)" / "65(f)"
+    paren_match = re.match(r'^(\d+)\(([MFmf])\)$', matched_string)
     if paren_match:
         gender_char = paren_match.group(2)
         return text.replace(matched_string, f"{new_age}({gender_char})", 1)
 
-    # Compact gender format: "28M" -> "65M", "25 M" -> "65 M"
-    compact_match = re.match(r'^(\d+)(\s?)([MF])$', matched_string)
+    # Gender prefix format: "F24" / "M17" -> "F65" / "M65"
+    prefix_match = re.match(r'^([MFmf])(\d+)$', matched_string)
+    if prefix_match:
+        gender_char = prefix_match.group(1)
+        return text.replace(matched_string, f"{gender_char}{new_age}", 1)
+
+    # Compact gender format: "28M" / "35f" / "25 M" -> "65M" / "65f" / "65 M"
+    compact_match = re.match(r'^(\d+)(\s?)([MFmf])$', matched_string)
     if compact_match:
         space = compact_match.group(2)
         gender_char = compact_match.group(3)

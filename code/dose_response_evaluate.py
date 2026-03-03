@@ -138,6 +138,7 @@ def evaluate_dose_response_sample(evaluator, sample):
         result[f'original_{question_type}'] = data
 
     for target_pct, para_text in sorted(sample['paraphrases'].items()):
+        target_pct = float(target_pct)
         para_results = evaluate_text_on_questions(evaluator, para_text)
         for question_type, data in para_results.items():
             result[f'pct{target_pct}_{question_type}'] = data

@@ -30,6 +30,8 @@ AGE_PATTERNS = [
     (r'(?:[Ff]emale|[Mm]ale)\s*,\s*(\d{1,3})\b', 'gender_comma_age'),
     # "21 Male" / "21 Female"
     (r'\b(\d{1,3})\s+(?:[Mm]ale|[Ff]emale)\b', 'age_gender'),
+    # "28 this year" — age followed by "this year"
+    (r'\b(\d{1,3})\s+this\s+year\b', 'this_year'),
     # "I'm 25" / "I am 30" / "I'm a 19" — pronoun + age (first-person)
     (r"(?:I'?m|I am)\s+(?:a\s+)?(\d{1,3})\b", 'im_age'),
 ]
@@ -98,7 +100,7 @@ def extract_age(text):
             if MIN_AGE <= age <= MAX_AGE:
                 return (age, match.group(1), match.start(1))
 
-        elif pat_type in ('gender_comma_age', 'age_gender', 'im_age'):
+        elif pat_type in ('gender_comma_age', 'age_gender', 'this_year', 'im_age'):
             age = int(match.group(1))
             if MIN_AGE <= age <= MAX_AGE:
                 return (age, match.group(1), match.start(1))

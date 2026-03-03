@@ -207,3 +207,43 @@ def bootstrap_mi_se(x, y, n_bootstrap=1000):
         mi = calculate_mi(x_arr[idx].tolist(), y_arr[idx].tolist())
         mis.append(mi)
     return np.std(mis)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Dose-response analysis")
+    parser.add_argument('--evaluation', type=str, required=True,
+                        help='Path to dose-response evaluation JSON')
+    parser.add_argument('--output', type=str,
+                        default='results/dose_response_analysis.xlsx',
+                        help='Output Excel path')
+    parser.add_argument('--plot_prefix', type=str,
+                        default='results/dose_response',
+                        help='Prefix for plot output files')
+    parser.add_argument('--n_bootstrap', type=int, default=1000,
+                        help='Number of bootstrap iterations')
+
+    args = parser.parse_args()
+
+    with open(args.evaluation, 'r') as f:
+        eval_results = json.load(f)
+    print(f"Loaded {len(eval_results)} evaluation results")
+
+    results_df = run_analysis(eval_results, n_bootstrap=args.n_bootstrap)
+    results_df.to_excel(args.output, index=False)
+
+    print("\n" + "=" * 60)
+    print("Dose-Response Analysis Results")
+    print("=" * 60)
+    for _, row in results_df.iterrows():
+        print(f"  {row['target_pct']:5.1f}%  {row['question']:10}  "
+              f"flip={row['flip_rate']:.3f}±{row['flip_rate_se']:.3f}  "
+              f"MI={row['mi']:.4f}±{row['mi_se']:.4f}  "
+              f"n={row['n_samples']}")
+
+    generate_plots(results_df, args.plot_prefix)
+    print(f"\nResults saved to: {args.output}")
+    print(f"Plots saved to: {args.plot_prefix}_flip_rate.png, {args.plot_prefix}_mi.png")
+
+
+if __name__ == "__main__":
+    main()

@@ -38,8 +38,8 @@ echo "Test mode: ${TEST_MODE}"
 echo "Started at: $(date)"
 echo ""
 
-source ~/.bashrc
-conda activate cot
+source ~/.bashrc || true
+conda activate cot || true
 
 mkdir -p results logs checkpoints/precision_check
 

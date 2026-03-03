@@ -82,6 +82,111 @@ def calculate_mi(x, y):
     return mi
 
 
+QUESTIONS = ['MANAGE', 'VISIT', 'RESOURCE']
+
+
+def run_analysis(eval_results, n_bootstrap=1000):
+    """Run dose-response analysis on evaluation results.
+
+    Args:
+        eval_results: List of dicts from dose_response_evaluate.py output
+        n_bootstrap: Number of bootstrap iterations
+
+    Returns:
+        pd.DataFrame with columns: target_pct, question, flip_rate,
+            flip_rate_se, mi, mi_se, n_samples
+    """
+    # Discover target levels from keys
+    target_pcts = set()
+    for r in eval_results:
+        for key in r:
+            if key.startswith('pct'):
+                pct_str = key.split('_')[0][3:]  # "pct5.0_MANAGE" -> "5.0"
+                target_pcts.add(float(pct_str))
+    target_pcts = sorted(target_pcts)
+
+    rows = []
+    for target_pct in target_pcts:
+        for question in QUESTIONS:
+            orig_votes = []
+            para_votes = []
+
+            for r in eval_results:
+                orig_key = f'original_{question}'
+                para_key = f'pct{target_pct}_{question}'
+
+                if orig_key not in r or para_key not in r:
+                    continue
+
+                orig_votes.append(majority_vote(r[orig_key]['binary_answers']))
+                para_votes.append(majority_vote(r[para_key]['binary_answers']))
+
+            flip_rate = compute_flip_rate(orig_votes, para_votes)
+            flip_se = bootstrap_flip_rate_se(orig_votes, para_votes, n_bootstrap)
+            mi = calculate_mi(orig_votes, para_votes)
+            mi_se_val = bootstrap_mi_se(orig_votes, para_votes, n_bootstrap)
+
+            rows.append({
+                'target_pct': target_pct,
+                'question': question,
+                'flip_rate': flip_rate,
+                'flip_rate_se': flip_se,
+                'mi': mi,
+                'mi_se': mi_se_val,
+                'n_samples': len(orig_votes),
+            })
+
+    return pd.DataFrame(rows)
+
+
+def generate_plots(results_df, output_prefix):
+    """Generate flip rate and MI dose-response plots.
+
+    Args:
+        results_df: DataFrame from run_analysis
+        output_prefix: Path prefix for output files (e.g., 'results/dose_response')
+    """
+    questions = results_df['question'].unique()
+
+    # Flip rate plot
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for q in questions:
+        subset = results_df[results_df['question'] == q].sort_values('target_pct')
+        ax.errorbar(
+            subset['target_pct'], subset['flip_rate'],
+            yerr=subset['flip_rate_se'],
+            marker='o', capsize=4, label=q,
+        )
+    ax.set_xlabel('Token Change %')
+    ax.set_ylabel('Flip Rate')
+    ax.set_title('Answer Flip Rate vs Token Change Percentage')
+    ax.legend()
+    ax.set_ylim(bottom=0)
+    fig.tight_layout()
+    fig.savefig(f'{output_prefix}_flip_rate.png', dpi=150)
+    fig.savefig(f'{output_prefix}_flip_rate.pdf')
+    plt.close(fig)
+
+    # MI plot
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for q in questions:
+        subset = results_df[results_df['question'] == q].sort_values('target_pct')
+        ax.errorbar(
+            subset['target_pct'], subset['mi'],
+            yerr=subset['mi_se'],
+            marker='o', capsize=4, label=q,
+        )
+    ax.set_xlabel('Token Change %')
+    ax.set_ylabel('Mutual Information (bits)')
+    ax.set_title('Mutual Information vs Token Change Percentage')
+    ax.legend()
+    ax.set_ylim(bottom=0)
+    fig.tight_layout()
+    fig.savefig(f'{output_prefix}_mi.png', dpi=150)
+    fig.savefig(f'{output_prefix}_mi.pdf')
+    plt.close(fig)
+
+
 def bootstrap_mi_se(x, y, n_bootstrap=1000):
     """Compute bootstrap SE of mutual information.
 

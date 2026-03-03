@@ -58,11 +58,12 @@ if [ -f "${BASELINES_PATH}" ]; then
     echo "Baselines file exists with ${BASELINE_COUNT} entries (will resume if incomplete)"
 fi
 
-python code/precision_check_baselines.py \
-    --age_swap "${AGE_SWAP_PATH}" \
-    --dataset data_with_baselines.csv \
-    --output "${BASELINES_PATH}" \
-    --model "${MODEL}"
+srun --partition=frink --cpus-per-task=4 --mem=16G --time=2:00:00 \
+    bash -c "source ~/.bashrc && conda activate cot && cd ${MEDPERTURB_DIR} && python code/precision_check_baselines.py \
+        --age_swap '${AGE_SWAP_PATH}' \
+        --dataset data_with_baselines.csv \
+        --output '${BASELINES_PATH}' \
+        --model '${MODEL}'"
 
 BASELINE_COUNT=$(python -c "import json; print(len(json.load(open('${BASELINES_PATH}'))))")
 echo "Baselines complete: ${BASELINE_COUNT} entries"

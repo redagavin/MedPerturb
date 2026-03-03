@@ -26,8 +26,7 @@ echo "Node: $(hostname)"
 
 nvidia-smi
 
-source ~/.bashrc
-conda activate cot
+PYTHON="/scratch/yang.zih/miniconda3/envs/cot/bin/python3.11"
 
 MODEL=${1:-"meta-llama/Llama-3.1-8B-Instruct"}
 
@@ -36,7 +35,7 @@ echo ""
 
 cd ${MEDPERTURB_DIR}
 
-python code/precision_check_evaluate.py \
+$PYTHON code/precision_check_evaluate.py \
     --model "${MODEL}" \
     --dataset "data_with_baselines.csv" \
     --age_swap "results/precision_check_age_swap.json" \

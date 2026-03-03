@@ -7,6 +7,7 @@ set -e
 # Defaults
 MODEL="meta-llama/Llama-3.1-8B-Instruct"
 TEST_MODE=false
+PYTHON="/scratch/yang.zih/miniconda3/envs/cot/bin/python3.11"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -38,9 +39,6 @@ echo "Test mode: ${TEST_MODE}"
 echo "Started at: $(date)"
 echo ""
 
-source ~/.bashrc || true
-conda activate cot || true
-
 mkdir -p results logs checkpoints/precision_check
 
 # ==========================================
@@ -54,18 +52,18 @@ BASELINES_PATH="results/precision_check_baselines.json"
 AGE_SWAP_PATH="results/precision_check_age_swap.json"
 
 if [ -f "${BASELINES_PATH}" ]; then
-    BASELINE_COUNT=$(python -c "import json; print(len(json.load(open('${BASELINES_PATH}'))))")
+    BASELINE_COUNT=$($PYTHON -c "import json; print(len(json.load(open('${BASELINES_PATH}'))))")
     echo "Baselines file exists with ${BASELINE_COUNT} entries (will resume if incomplete)"
 fi
 
 srun --partition=frink --cpus-per-task=4 --mem=16G --time=2:00:00 \
-    bash -c "source ~/.bashrc && conda activate cot && cd ${MEDPERTURB_DIR} && python code/precision_check_baselines.py \
-        --age_swap '${AGE_SWAP_PATH}' \
+    $PYTHON code/precision_check_baselines.py \
+        --age_swap "${AGE_SWAP_PATH}" \
         --dataset data_with_baselines.csv \
-        --output '${BASELINES_PATH}' \
-        --model '${MODEL}'"
+        --output "${BASELINES_PATH}" \
+        --model "${MODEL}"
 
-BASELINE_COUNT=$(python -c "import json; print(len(json.load(open('${BASELINES_PATH}'))))")
+BASELINE_COUNT=$($PYTHON -c "import json; print(len(json.load(open('${BASELINES_PATH}'))))")
 echo "Baselines complete: ${BASELINE_COUNT} entries"
 echo ""
 
@@ -78,7 +76,7 @@ echo "======================================"
 
 if [ "$TEST_MODE" = true ]; then
     srun --partition=frink --gres=gpu:1 --cpus-per-task=8 --mem=80G --time=2:00:00 \
-        bash -c "source ~/.bashrc && conda activate cot && python code/precision_check_evaluate.py \
+        $PYTHON code/precision_check_evaluate.py \
             --model ${MODEL} \
             --dataset data_with_baselines.csv \
             --age_swap results/precision_check_age_swap.json \
@@ -87,7 +85,7 @@ if [ "$TEST_MODE" = true ]; then
             --checkpoint_dir checkpoints/precision_check \
             --gpu_id 0 \
             --total_gpus 1 \
-            --sample_size 5"
+            --sample_size 5
 else
     # Production: sbatch with auto-relaunch
     check_completion() {
@@ -149,7 +147,7 @@ if [ "$TEST_MODE" = true ]; then
     cp results/precision_check_eval_test.json "${MERGED_OUTPUT}"
     echo "Test mode: copied to ${MERGED_OUTPUT}"
 else
-    python << 'EOF'
+    $PYTHON << 'EOF'
 import json
 import glob
 
@@ -184,7 +182,7 @@ echo "======================================"
 echo "STEP 4: Precision Check Analysis"
 echo "======================================"
 
-python case_studies/precision_check_analysis.py \
+$PYTHON case_studies/precision_check_analysis.py \
     --evaluation results/precision_check_evaluation_llama3.json \
     --output results/precision_check_analysis.xlsx
 

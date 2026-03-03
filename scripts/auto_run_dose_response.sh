@@ -56,9 +56,14 @@ if [ -f "results/dose_response_paraphrases.json" ]; then
         echo "Paraphrases complete (${PARA_COUNT}/${EXPECTED}) — skipping"
     else
         echo "Paraphrases incomplete (${PARA_COUNT}/${EXPECTED}) — resuming"
+        SAMPLE_SIZE_ARG=""
+        if [ "$TEST_MODE" = true ]; then
+            SAMPLE_SIZE_ARG="--sample_size 5"
+        fi
         python code/generate_dose_response_paraphrases.py \
             --dataset data.csv \
-            --output results/dose_response_paraphrases.json
+            --output results/dose_response_paraphrases.json \
+            ${SAMPLE_SIZE_ARG}
     fi
 else
     if [ "$TEST_MODE" = true ]; then

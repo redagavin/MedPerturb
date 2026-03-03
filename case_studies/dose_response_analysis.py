@@ -138,7 +138,17 @@ def run_analysis(eval_results, n_bootstrap=1000):
                 'n_samples': len(orig_votes),
             })
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+
+    # Warn if sample counts differ across target levels for the same question
+    for question in QUESTIONS:
+        q_rows = df[df['question'] == question]
+        counts = q_rows['n_samples'].unique()
+        if len(counts) > 1:
+            print(f"WARNING: Inconsistent sample counts for {question} "
+                  f"across target levels: {dict(zip(q_rows['target_pct'], q_rows['n_samples']))}")
+
+    return df
 
 
 def generate_plots(results_df, output_prefix):

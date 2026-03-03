@@ -1,9 +1,16 @@
 # ABOUTME: Evaluate model responses at multiple token change levels
 # ABOUTME: Measures how paraphrase magnitude affects triage answer stability
 
+import os
 import json
+import pickle
+import shutil
+import tempfile
+import time
+import argparse
 
 import pandas as pd
+from tqdm import tqdm
 
 
 TRIAGE_QUESTIONS = {
@@ -136,3 +143,113 @@ def evaluate_dose_response_sample(evaluator, sample):
             result[f'pct{target_pct}_{question_type}'] = data
 
     return result
+
+
+def save_checkpoint(checkpoint_path, results, completed_context_ids):
+    """Save checkpoint to disk atomically to prevent corruption on crash."""
+    data = {
+        'results': results,
+        'completed_context_ids': list(completed_context_ids),
+    }
+    dir_path = os.path.dirname(checkpoint_path) or '.'
+    with tempfile.NamedTemporaryFile('wb', delete=False, dir=dir_path, suffix='.tmp') as f:
+        pickle.dump(data, f)
+        temp_path = f.name
+    shutil.move(temp_path, checkpoint_path)
+
+
+def load_checkpoint(checkpoint_path):
+    """Load checkpoint from disk."""
+    if not os.path.exists(checkpoint_path):
+        return [], set()
+    with open(checkpoint_path, 'rb') as f:
+        data = pickle.load(f)
+    results = data.get('results', [])
+    completed = set(data.get('completed_context_ids', []))
+    return results, completed
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Dose-response evaluation")
+    parser.add_argument('--model', type=str, required=True, help='Model to evaluate')
+    parser.add_argument('--paraphrases', type=str, required=True,
+                        help='Path to dose_response_paraphrases.json')
+    parser.add_argument('--dataset', type=str, required=True, help='Path to data.csv')
+    parser.add_argument('--output', type=str, required=True, help='Output JSON path')
+    parser.add_argument('--checkpoint_dir', type=str,
+                        default='checkpoints/dose_response',
+                        help='Checkpoint directory')
+    parser.add_argument('--checkpoint_freq', type=int, default=5,
+                        help='Checkpoint every N samples')
+    parser.add_argument('--gpu_id', type=int, default=None, help='GPU ID for sharding')
+    parser.add_argument('--total_gpus', type=int, default=1, help='Total GPUs')
+    parser.add_argument('--sample_size', type=int, default=None,
+                        help='Limit samples for testing')
+
+    args = parser.parse_args()
+
+    # Auto-detect SLURM array job
+    if 'SLURM_ARRAY_TASK_ID' in os.environ:
+        args.gpu_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+        args.total_gpus = int(os.environ['SLURM_ARRAY_TASK_COUNT'])
+        print(f"Detected SLURM array job: GPU {args.gpu_id} of {args.total_gpus}")
+    elif args.gpu_id is None:
+        args.gpu_id = 0
+
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
+    model_short = args.model.split('/')[-1].lower().replace('-', '_')
+    checkpoint_path = f"{args.checkpoint_dir}/{model_short}_gpu{args.gpu_id}.pkl"
+
+    print("=" * 40)
+    print("Dose-Response Evaluation")
+    print("=" * 40)
+    print(f"Model: {args.model}")
+    print(f"GPU: {args.gpu_id} of {args.total_gpus}")
+    print()
+
+    print("Loading data...")
+    samples = load_dose_response_data(args.paraphrases, args.dataset)
+    print(f"  {len(samples)} samples")
+
+    samples = shard_samples(samples, args.gpu_id, args.total_gpus)
+    print(f"  GPU {args.gpu_id} shard: {len(samples)} samples")
+
+    if args.sample_size:
+        samples = samples[:args.sample_size]
+        print(f"  Limited to {len(samples)} samples (test mode)")
+
+    results, completed = load_checkpoint(checkpoint_path)
+    if completed:
+        print(f"  Resuming: {len(completed)} already completed")
+
+    print(f"\nInitializing model: {args.model}")
+    from evaluate_models import ModelEvaluator
+    evaluator = ModelEvaluator(args.model)
+
+    print(f"\nEvaluating {len(samples)} samples...")
+    for sample in tqdm(samples, desc=f"GPU {args.gpu_id}"):
+        if sample['context_id'] in completed:
+            continue
+
+        result = evaluate_dose_response_sample(evaluator, sample)
+        results.append(result)
+        completed.add(sample['context_id'])
+
+        if len(results) % args.checkpoint_freq == 0:
+            save_checkpoint(checkpoint_path, results, completed)
+
+    save_checkpoint(checkpoint_path, results, completed)
+    with open(args.output, 'w') as f:
+        json.dump(results, f, indent=2)
+    print(f"\nResults saved to: {args.output}")
+
+    marker = (f"{args.checkpoint_dir}/{model_short}_gpu{args.gpu_id}"
+              f"_of_{args.total_gpus}_COMPLETE")
+    with open(marker, 'w') as f:
+        f.write(str(time.time()))
+
+    print(f"\nGPU {args.gpu_id} complete: {len(results)} samples evaluated")
+
+
+if __name__ == "__main__":
+    main()

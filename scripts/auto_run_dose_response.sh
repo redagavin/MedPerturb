@@ -84,7 +84,7 @@ if [ "$TEST_MODE" = true ]; then
     srun --partition=frink --gres=gpu:1 --cpus-per-task=8 --mem=80G --time=2:00:00 \
         bash -c "source ~/.bashrc && conda activate cot && cd ${MEDPERTURB_DIR} && \
         python code/dose_response_evaluate.py \
-            --model ${MODEL} \
+            --model '${MODEL}' \
             --paraphrases results/dose_response_paraphrases.json \
             --dataset data.csv \
             --output results/dose_response_eval_test.json \
@@ -159,6 +159,8 @@ else
 import json
 import glob
 import os
+import shutil
+import tempfile
 
 result_files = glob.glob('results/dose_response_eval_*.json')
 result_files = [f for f in result_files if 'test' not in f]
@@ -178,8 +180,10 @@ for f in sorted(result_files):
 
 model_short = os.environ.get('MODEL_SHORT', 'llama_3.1_8b_instruct')
 output = f'results/dose_response_evaluation_{model_short}.json'
-with open(output, 'w') as f:
+with tempfile.NamedTemporaryFile('w', delete=False, dir='results', suffix='.tmp') as f:
     json.dump(merged, f, indent=2)
+    temp_path = f.name
+shutil.move(temp_path, output)
 
 print(f"Merged {len(merged)} unique results to {output}")
 MERGE_EOF

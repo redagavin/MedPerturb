@@ -148,6 +148,9 @@ def generate_plots(results_df, output_prefix):
         results_df: DataFrame from run_analysis
         output_prefix: Path prefix for output files (e.g., 'results/dose_response')
     """
+    if results_df.empty:
+        print("Warning: No results to plot")
+        return
     questions = results_df['question'].unique()
 
     # Flip rate plot

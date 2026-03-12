@@ -49,6 +49,17 @@ echo "======================================"
 echo "STEP 1: Generate Paraphrases"
 echo "======================================"
 
+SAMPLE_SIZE_ARG=""
+if [ "$TEST_MODE" = true ]; then
+    SAMPLE_SIZE_ARG="--sample_size 5"
+fi
+
+GENERATE_CMD="source ~/.bashrc && conda activate cot && cd ${MEDPERTURB_DIR} && \
+    python code/generate_dose_response_paraphrases.py \
+        --dataset data.csv \
+        --output results/dose_response_paraphrases.json \
+        ${SAMPLE_SIZE_ARG}"
+
 if [ -f "results/dose_response_paraphrases.json" ]; then
     PARA_COUNT=$(python -c "import json; print(len(json.load(open('results/dose_response_paraphrases.json'))))")
     EXPECTED=500
@@ -56,26 +67,12 @@ if [ -f "results/dose_response_paraphrases.json" ]; then
         echo "Paraphrases complete (${PARA_COUNT}/${EXPECTED}) — skipping"
     else
         echo "Paraphrases incomplete (${PARA_COUNT}/${EXPECTED}) — resuming"
-        SAMPLE_SIZE_ARG=""
-        if [ "$TEST_MODE" = true ]; then
-            SAMPLE_SIZE_ARG="--sample_size 5"
-        fi
-        python code/generate_dose_response_paraphrases.py \
-            --dataset data.csv \
-            --output results/dose_response_paraphrases.json \
-            ${SAMPLE_SIZE_ARG}
+        srun --partition=frink --cpus-per-task=4 --mem=16G --time=4:00:00 \
+            bash -c "${GENERATE_CMD}"
     fi
 else
-    if [ "$TEST_MODE" = true ]; then
-        python code/generate_dose_response_paraphrases.py \
-            --dataset data.csv \
-            --output results/dose_response_paraphrases.json \
-            --sample_size 5
-    else
-        python code/generate_dose_response_paraphrases.py \
-            --dataset data.csv \
-            --output results/dose_response_paraphrases.json
-    fi
+    srun --partition=frink --cpus-per-task=4 --mem=16G --time=4:00:00 \
+        bash -c "${GENERATE_CMD}"
 fi
 
 # ==========================================

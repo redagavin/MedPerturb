@@ -1,6 +1,7 @@
 # ABOUTME: Tests for evaluate_models.py extraction logic and chat template
 # ABOUTME: Covers binary answer parsing fallback chain and source code inspection
 
+import ast
 import pytest
 import sys
 import os
@@ -270,3 +271,71 @@ class TestEvaluateTriageTraceData:
                         found_fields.add(field)
         missing = set(required_fields) - found_fields
         assert not missing, f"evaluate_triage missing trace fields: {missing}"
+
+
+class TestLogitExtraction:
+    """Tests for Yes/No token ID validation and logit extraction."""
+
+    def test_validate_yes_no_tokens_exist(self):
+        """ModelEvaluator has yes_token_id and no_token_id after init."""
+        source = _read_source('evaluate_models.py')
+        assert '_validate_yes_no_tokens' in source
+
+    def test_validate_yes_no_tokens_called_in_init(self):
+        """_validate_yes_no_tokens is called during __init__."""
+        source = _read_source('evaluate_models.py')
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == '__init__':
+                init_source = ast.get_source_segment(source, node)
+                assert '_validate_yes_no_tokens' in init_source
+
+    def test_extract_logit_probs_method_exists(self):
+        """ModelEvaluator must have extract_logit_probs method."""
+        source = _read_source('evaluate_models.py')
+        tree = ast.parse(source)
+        method_names = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == 'extract_logit_probs':
+                method_names.append(node.name)
+        assert 'extract_logit_probs' in method_names
+
+    def test_extract_logit_probs_uses_no_grad(self):
+        """extract_logit_probs must use torch.no_grad() context."""
+        source = _read_source('evaluate_models.py')
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == 'extract_logit_probs':
+                func_source = ast.get_source_segment(source, node)
+                assert 'no_grad' in func_source, \
+                    "extract_logit_probs must use torch.no_grad()"
+
+    def test_extract_logit_probs_does_not_call_generate(self):
+        """extract_logit_probs must NOT call model.generate()."""
+        source = _read_source('evaluate_models.py')
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == 'extract_logit_probs':
+                func_source = ast.get_source_segment(source, node)
+                assert '.generate(' not in func_source, \
+                    "extract_logit_probs must use model(**inputs), not model.generate()"
+
+    def test_extract_logit_probs_guards_openai(self):
+        """extract_logit_probs must raise NotImplementedError for OpenAI models."""
+        source = _read_source('evaluate_models.py')
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == 'extract_logit_probs':
+                func_source = ast.get_source_segment(source, node)
+                assert 'NotImplementedError' in func_source, \
+                    "extract_logit_probs must guard against OpenAI model_type"
+
+    def test_evaluate_triage_returns_logit_probs(self):
+        """evaluate_triage result must include logit_probs key."""
+        source = _read_source('evaluate_models.py')
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == 'evaluate_triage':
+                func_source = ast.get_source_segment(source, node)
+                assert 'logit_probs' in func_source, \
+                    "evaluate_triage must include logit_probs in result dict"

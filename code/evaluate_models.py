@@ -105,7 +105,8 @@ class ModelEvaluator:
                     token=hf_token
                 )
             self.model_type = "huggingface"
-        
+            self._validate_yes_no_tokens()
+
         # Initialize LLaMA-3-8B for binary extraction
         self.extractor_tokenizer = AutoTokenizer.from_pretrained(
             "meta-llama/Llama-3.1-8B-Instruct",
@@ -215,6 +216,51 @@ class ModelEvaluator:
             "extraction_method": extraction_method
         }
 
+    def _validate_yes_no_tokens(self):
+        """Find and validate Yes/No token IDs in tokenizer vocabulary."""
+        yes_ids = self.tokenizer.encode("Yes", add_special_tokens=False)
+        no_ids = self.tokenizer.encode("No", add_special_tokens=False)
+        if len(yes_ids) != 1:
+            raise ValueError(
+                f"'Yes' tokenizes to {len(yes_ids)} tokens ({yes_ids}), expected 1"
+            )
+        if len(no_ids) != 1:
+            raise ValueError(
+                f"'No' tokenizes to {len(no_ids)} tokens ({no_ids}), expected 1"
+            )
+        self.yes_token_id = yes_ids[0]
+        self.no_token_id = no_ids[0]
+        self.logger.info(
+            f"Yes token ID: {self.yes_token_id}, No token ID: {self.no_token_id}"
+        )
+
+    def extract_logit_probs(self, prompt):
+        """Extract P(Yes) from next-token logits via separate forward pass.
+
+        Returns P(Yes) as a float. P(No) = 1 - P(Yes).
+        """
+        if self.model_type == "openai":
+            raise NotImplementedError(
+                "Logit extraction not supported for OpenAI models"
+            )
+        messages = [{"role": "user", "content": prompt}]
+        formatted = self.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        inputs = self.tokenizer(formatted, return_tensors="pt").to(self.device)
+
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+
+        # Last position logits predict the next token
+        last_logits = outputs.logits[0, -1, :]
+        yes_no_logits = torch.stack([
+            last_logits[self.yes_token_id],
+            last_logits[self.no_token_id],
+        ])
+        probs = torch.softmax(yes_no_logits, dim=0)
+        return probs[0].item()
+
     def evaluate_triage(self, patient_info: str) -> Dict[str, dict]:
         """
         Evaluate the model on all triage questions.
@@ -257,12 +303,16 @@ class ModelEvaluator:
                 extraction_methods.append(extraction["extraction_method"])
                 binary_answers.append(extraction["answer"])
 
+            # Logit extraction (deterministic, single forward pass)
+            logit_probs = self.extract_logit_probs(prompt)
+
             results[question_type] = {
                 "seeds": list(self.seeds),
                 "model_responses": model_responses,
                 "extractor_outputs": extractor_outputs,
                 "extraction_methods": extraction_methods,
-                "binary_answers": binary_answers
+                "binary_answers": binary_answers,
+                "logit_probs": logit_probs,
             }
 
         return results

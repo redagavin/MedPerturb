@@ -1,8 +1,19 @@
 # ABOUTME: Tests for sanity check evaluation pipeline
 # ABOUTME: Covers data loading, prompt construction, and evaluation logic
 
+import ast
+import os
 import pytest
 import pandas as pd
+
+
+MEDPERTURB_CODE = '/scratch/yang.zih/cot_faithfulness/MedPerturb/code'
+
+
+def _read_source(filename):
+    path = os.path.join(MEDPERTURB_CODE, filename)
+    with open(path) as f:
+        return f.read()
 
 
 @pytest.fixture
@@ -126,6 +137,18 @@ class TestGenderPrompt:
         assert "no" in prompt.lower()
 
 
+class MockEvaluator:
+    """Shared mock evaluator for tests that need model-like behavior."""
+    seeds = [0, 1, 42]
+    def _call_model(self, prompt, seed):
+        return "Yes"
+    def _extract_binary_answer(self, response, question_type):
+        return {"answer": 1, "extractor_output": "1",
+                "extraction_method": "integer_parse"}
+    def extract_logit_probs(self, prompt):
+        return 0.75
+
+
 class TestEvaluateGenderQuestion:
     """Tests for the per-sample gender evaluation function."""
 
@@ -133,16 +156,7 @@ class TestEvaluateGenderQuestion:
         """Must return a dict with 3 binary values (one per seed)."""
         from sanity_check_evaluate import evaluate_gender_question
 
-        class MockEvaluator:
-            seeds = [0, 1, 42]
-            def _call_model(self, prompt, seed):
-                return "Yes, the patient is male."
-            def _extract_binary_answer(self, response, question_type):
-                return {"answer": 1, "extractor_output": "1",
-                        "extraction_method": "integer_parse"}
-
-        evaluator = MockEvaluator()
-        result = evaluate_gender_question(evaluator, "Some patient info")
+        result = evaluate_gender_question(MockEvaluator(), "Some patient info")
         assert len(result['binary_answers']) == 3
         assert all(r in [0, 1] for r in result['binary_answers'])
 
@@ -152,17 +166,13 @@ class TestEvaluateGenderQuestion:
 
         captured_qtypes = []
 
-        class MockEvaluator:
-            seeds = [0, 1, 42]
-            def _call_model(self, prompt, seed):
-                return "Yes"
+        class CapturingEvaluator(MockEvaluator):
             def _extract_binary_answer(self, response, question_type):
                 captured_qtypes.append(question_type)
                 return {"answer": 1, "extractor_output": "1",
                         "extraction_method": "integer_parse"}
 
-        evaluator = MockEvaluator()
-        evaluate_gender_question(evaluator, "info")
+        evaluate_gender_question(CapturingEvaluator(), "info")
         assert all(qt == "GENDER" for qt in captured_qtypes)
 
 
@@ -170,16 +180,8 @@ class TestEvaluateSample:
     """Tests for evaluating all three versions of a single sample."""
 
     def test_returns_correct_keys(self):
-        """Result must have context_id and all three GENDER trace dicts."""
+        """Result must have context_id and all four GENDER trace dicts."""
         from sanity_check_evaluate import evaluate_sanity_check_sample
-
-        class MockEvaluator:
-            seeds = [0, 1, 42]
-            def _call_model(self, prompt, seed):
-                return "Yes"
-            def _extract_binary_answer(self, response, question_type):
-                return {"answer": 1, "extractor_output": "1",
-                        "extraction_method": "integer_parse"}
 
         sample = {
             'context_id': 'N75',
@@ -192,9 +194,11 @@ class TestEvaluateSample:
         assert 'original_GENDER' in result
         assert 'gender_swap_GENDER' in result
         assert 'gender_swap_baseline_GENDER' in result
+        assert 'neutral_GENDER' in result
         assert len(result['original_GENDER']['binary_answers']) == 3
         assert len(result['gender_swap_GENDER']['binary_answers']) == 3
         assert len(result['gender_swap_baseline_GENDER']['binary_answers']) == 3
+        assert len(result['neutral_GENDER']['binary_answers']) == 3
 
 
 class TestTraceDataReturn:
@@ -204,14 +208,6 @@ class TestTraceDataReturn:
         """Must return dict with binary_answers, model_responses, etc."""
         from sanity_check_evaluate import evaluate_gender_question
 
-        class MockEvaluator:
-            seeds = [0, 1, 42]
-            def _call_model(self, prompt, seed):
-                return "Yes, the patient is male."
-            def _extract_binary_answer(self, response, question_type):
-                return {"answer": 1, "extractor_output": "1",
-                        "extraction_method": "integer_parse"}
-
         result = evaluate_gender_question(MockEvaluator(), "Some info")
         assert isinstance(result, dict)
         assert 'binary_answers' in result
@@ -220,6 +216,14 @@ class TestTraceDataReturn:
         assert 'extraction_methods' in result
         assert len(result['binary_answers']) == 3
         assert all(r in [0, 1] for r in result['binary_answers'])
+
+    def test_includes_logit_probs(self):
+        """Must include logit_probs from evaluator.extract_logit_probs."""
+        from sanity_check_evaluate import evaluate_gender_question
+
+        result = evaluate_gender_question(MockEvaluator(), "Some info")
+        assert 'logit_probs' in result
+        assert result['logit_probs'] == 0.75
 
 
 class TestCheckpointing:
@@ -294,3 +298,50 @@ class TestShardSamples:
         shard1 = shard_samples(samples, gpu_id=1, total_gpus=3)
         shard2 = shard_samples(samples, gpu_id=2, total_gpus=3)
         assert len(shard0) + len(shard1) + len(shard2) == 7
+
+
+class TestNeutralBaseline:
+    """Neutral baseline prepends fixed sentence to original text."""
+
+    def test_neutral_key_in_result(self):
+        """evaluate_sanity_check_sample returns neutral_GENDER key."""
+        source = _read_source('sanity_check_evaluate.py')
+        assert 'neutral_GENDER' in source
+
+    def test_neutral_sentence_constant(self):
+        """NEUTRAL_SENTENCE is defined."""
+        source = _read_source('sanity_check_evaluate.py')
+        assert 'A family member came with me to the appointment.' in source
+
+    def test_neutral_text_construction(self):
+        """Neutral text is NEUTRAL_SENTENCE + ' ' + original_text."""
+        from sanity_check_evaluate import NEUTRAL_SENTENCE
+        original = "Patient presents with cough."
+        expected = NEUTRAL_SENTENCE + " " + original
+        assert expected == "A family member came with me to the appointment. Patient presents with cough."
+
+
+class TestLogitProbsInResult:
+    """Evaluation results include logit_probs."""
+
+    def test_evaluate_gender_question_has_logit_probs(self):
+        """evaluate_gender_question result includes logit_probs key."""
+        source = _read_source('sanity_check_evaluate.py')
+        assert 'logit_probs' in source
+
+
+class TestUsesEvalUtils:
+    """sanity_check_evaluate.py uses shared eval_utils."""
+
+    def test_imports_eval_utils(self):
+        source = _read_source('sanity_check_evaluate.py')
+        assert 'eval_utils' in source
+
+    def test_no_inline_save_checkpoint(self):
+        """save_checkpoint should come from eval_utils, not defined inline."""
+        source = _read_source('sanity_check_evaluate.py')
+        tree = ast.parse(source)
+        # No top-level function named save_checkpoint
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == 'save_checkpoint':
+                pytest.fail("save_checkpoint should be imported from eval_utils, not defined inline")

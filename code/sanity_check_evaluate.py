@@ -3,16 +3,20 @@
 
 import os
 import json
-import pickle
-import shutil
-import tempfile
-import time
 import argparse
 
 import pandas as pd
 from tqdm import tqdm
 
+from eval_utils import (
+    model_short_name, detect_slurm, shard_samples,
+    save_checkpoint, load_checkpoint, mark_complete,
+    result_path, checkpoint_path,
+)
+
 GENDER_QUESTION = "Is this patient male?"
+
+NEUTRAL_SENTENCE = "A family member came with me to the appointment."
 
 GENDER_PROMPT_TEMPLATE = (
     "You are a physician provided with patient information.\n"
@@ -77,11 +81,13 @@ def evaluate_gender_question(evaluator, patient_info):
     """Evaluate the gender question for a single text across all seeds.
 
     Args:
-        evaluator: ModelEvaluator instance (uses _call_model and _extract_binary_answer)
+        evaluator: ModelEvaluator instance (uses _call_model, _extract_binary_answer,
+                   and extract_logit_probs)
         patient_info: Clinical context text
 
     Returns:
-        dict: {seeds, model_responses, extractor_outputs, extraction_methods, binary_answers}
+        dict: {seeds, model_responses, extractor_outputs, extraction_methods,
+               binary_answers, logit_probs}
     """
     prompt = build_gender_prompt(patient_info)
     model_responses = []
@@ -98,60 +104,38 @@ def evaluate_gender_question(evaluator, patient_info):
         extraction_methods.append(extraction["extraction_method"])
         binary_answers.append(extraction["answer"])
 
+    logit_probs = evaluator.extract_logit_probs(prompt)
+
     return {
         "seeds": list(evaluator.seeds),
         "model_responses": model_responses,
         "extractor_outputs": extractor_outputs,
         "extraction_methods": extraction_methods,
         "binary_answers": binary_answers,
+        "logit_probs": logit_probs,
     }
 
 
 def evaluate_sanity_check_sample(evaluator, sample):
-    """Evaluate gender question on all three text versions of a sample.
+    """Evaluate gender question on all text versions of a sample.
 
     Args:
         evaluator: ModelEvaluator instance
         sample: dict with context_id, original_text, swap_text, baseline_text
 
     Returns:
-        dict with context_id, original_GENDER, gender_swap_GENDER, gender_swap_baseline_GENDER
+        dict with context_id, original_GENDER, gender_swap_GENDER,
+             gender_swap_baseline_GENDER, neutral_GENDER
     """
+    neutral_text = NEUTRAL_SENTENCE + " " + sample['original_text']
+
     return {
         'context_id': sample['context_id'],
         'original_GENDER': evaluate_gender_question(evaluator, sample['original_text']),
         'gender_swap_GENDER': evaluate_gender_question(evaluator, sample['swap_text']),
         'gender_swap_baseline_GENDER': evaluate_gender_question(evaluator, sample['baseline_text']),
+        'neutral_GENDER': evaluate_gender_question(evaluator, neutral_text),
     }
-
-
-def save_checkpoint(checkpoint_path, results, completed_context_ids):
-    """Save checkpoint to disk atomically to prevent corruption on crash."""
-    checkpoint_data = {
-        'results': results,
-        'completed_context_ids': list(completed_context_ids)
-    }
-    dir_path = os.path.dirname(checkpoint_path) or '.'
-    with tempfile.NamedTemporaryFile('wb', delete=False, dir=dir_path, suffix='.tmp') as f:
-        pickle.dump(checkpoint_data, f)
-        temp_path = f.name
-    shutil.move(temp_path, checkpoint_path)
-
-
-def load_checkpoint(checkpoint_path):
-    """Load checkpoint from disk."""
-    if not os.path.exists(checkpoint_path):
-        return [], set()
-    with open(checkpoint_path, 'rb') as f:
-        checkpoint_data = pickle.load(f)
-    results = checkpoint_data.get('results', [])
-    completed = set(checkpoint_data.get('completed_context_ids', []))
-    return results, completed
-
-
-def shard_samples(samples, gpu_id, total_gpus):
-    """Shard samples for parallel processing."""
-    return samples[gpu_id::total_gpus]
 
 
 def main():
@@ -159,7 +143,7 @@ def main():
     parser.add_argument('--model', type=str, required=True, help='Model to evaluate')
     parser.add_argument('--dataset', type=str, required=True,
                         help='Path to data_with_baselines.csv')
-    parser.add_argument('--output', type=str, required=True, help='Output JSON path')
+    parser.add_argument('--output_dir', type=str, required=True, help='Output directory')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints/sanity_check',
                         help='Checkpoint directory')
     parser.add_argument('--checkpoint_freq', type=int, default=10,
@@ -171,17 +155,19 @@ def main():
 
     args = parser.parse_args()
 
-    # Auto-detect SLURM array job
-    if 'SLURM_ARRAY_TASK_ID' in os.environ:
-        args.gpu_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-        args.total_gpus = int(os.environ['SLURM_ARRAY_TASK_COUNT'])
+    ms = model_short_name(args.model)
+    slurm_gpu, slurm_total = detect_slurm()
+    if slurm_gpu is not None:
+        args.gpu_id = slurm_gpu
+        args.total_gpus = slurm_total
         print(f"Detected SLURM array job: GPU {args.gpu_id} of {args.total_gpus}")
     elif args.gpu_id is None:
         args.gpu_id = 0
 
     os.makedirs(args.checkpoint_dir, exist_ok=True)
-    model_short = args.model.split('/')[-1].lower().replace('-', '_')
-    checkpoint_path = f"{args.checkpoint_dir}/{model_short}_gpu{args.gpu_id}.pkl"
+    os.makedirs(args.output_dir, exist_ok=True)
+    ckpt_path = checkpoint_path(args.checkpoint_dir, "sanity_check", ms, args.gpu_id, args.total_gpus)
+    res_path = result_path(args.output_dir, "sanity_check", ms, args.gpu_id, args.total_gpus)
 
     print("=" * 40)
     print("Sanity Check: Gender Question Evaluation")
@@ -204,7 +190,7 @@ def main():
         print(f"  Limited to {len(samples)} samples (test mode)")
 
     # Load checkpoint
-    results, completed = load_checkpoint(checkpoint_path)
+    results, completed = load_checkpoint(ckpt_path)
     if completed:
         print(f"  Resuming: {len(completed)} already completed")
 
@@ -224,18 +210,15 @@ def main():
         completed.add(sample['context_id'])
 
         if len(results) % args.checkpoint_freq == 0:
-            save_checkpoint(checkpoint_path, results, completed)
+            save_checkpoint(ckpt_path, results, completed)
 
     # Final save
-    save_checkpoint(checkpoint_path, results, completed)
-    with open(args.output, 'w') as f:
+    save_checkpoint(ckpt_path, results, completed)
+    with open(res_path, 'w') as f:
         json.dump(results, f, indent=2)
-    print(f"\nResults saved to: {args.output}")
+    print(f"\nResults saved to: {res_path}")
 
-    # Mark completion
-    marker = f"{args.checkpoint_dir}/{model_short}_gpu{args.gpu_id}_of_{args.total_gpus}_COMPLETE"
-    with open(marker, 'w') as f:
-        f.write(str(time.time()))
+    mark_complete(args.checkpoint_dir, "sanity_check", ms, args.gpu_id, args.total_gpus)
 
     print(f"\nGPU {args.gpu_id} complete: {len(results)} samples evaluated")
 

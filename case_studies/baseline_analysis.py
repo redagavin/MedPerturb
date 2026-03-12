@@ -1,190 +1,189 @@
-# ABOUTME: Bootstrap MI analysis for perturbation vs baseline comparison
-# ABOUTME: Tests whether perturbations have specific effects beyond general text changes
+# ABOUTME: Statistical analysis comparing perturbation effects vs baselines using 5 metrics
+# ABOUTME: Loads JSON evaluation results, applies BH correction, supports calibrated + neutral baselines
 
 import numpy as np
 import pandas as pd
+import json
 import argparse
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'code'))
+from metrics import mi, phi, flip_rate
+from metrics import jsd, kl
+
+POPULATION_METRICS = {"mi": mi, "phi": phi, "flip_rate": flip_rate}
+SAMPLE_METRICS = {"jsd": jsd, "kl": kl}
+
+PERTURBATION_TYPES = ['gender_swap', 'gender_remove', 'uncertain', 'colorful']
+TASKS = ['MANAGE', 'VISIT', 'RESOURCE']
 
 
-def calculate_mi(x: pd.Series, y: pd.Series) -> float:
-    """
-    Calculate mutual information between two arrays.
+def majority_vote(responses):
+    """Return majority vote from list of 0/1 responses."""
+    return 1 if sum(responses) > len(responses) / 2 else 0
 
-    Exact implementation from case_study1.ipynb.
+
+def benjamini_hochberg(p_values):
+    """Benjamini-Hochberg FDR correction. Returns adjusted p-values."""
+    p_values = np.asarray(p_values)
+    n = len(p_values)
+    sorted_idx = np.argsort(p_values)
+    sorted_pvals = p_values[sorted_idx]
+
+    adjusted = np.empty(n)
+    adjusted[-1] = sorted_pvals[-1]
+    for i in range(n - 2, -1, -1):
+        adjusted[i] = min(sorted_pvals[i] * n / (i + 1), adjusted[i + 1])
+
+    result = np.empty(n)
+    result[sorted_idx] = np.minimum(adjusted, 1.0)
+    return result
+
+
+def _extract_vectors(eval_results, pert_type, baseline_type, task):
+    """Extract aligned binary and probability vectors from evaluation results.
 
     Args:
-        x: First array (binary 0/1)
-        y: Second array (binary 0/1)
+        eval_results: List of sample dicts from main_evaluate.py output
+        pert_type: Perturbation name (e.g. 'gender_swap')
+        baseline_type: 'calibrated' or 'neutral'
+        task: Question type (e.g. 'MANAGE')
 
     Returns:
-        float: Mutual information in bits
+        tuple: (orig_binary, pert_binary, base_binary,
+                orig_probs, pert_probs, base_probs)
     """
-    # Create joint distribution
-    joint = pd.crosstab(x, y, normalize=True)
-    # Calculate marginal distributions
-    p_x = joint.sum(axis=1)
-    p_y = joint.sum(axis=0)
-    # Calculate mutual information
-    mi = 0
-    for i in joint.index:
-        for j in joint.columns:
-            if joint.loc[i, j] > 0:
-                mi += joint.loc[i, j] * np.log2(joint.loc[i, j] / (p_x[i] * p_y[j]))
-    return mi
+    orig_binary = []
+    pert_binary = []
+    base_binary = []
+    orig_probs = []
+    pert_probs = []
+    base_probs = []
 
-
-def bootstrap_mi_test(
-    orig: pd.Series,
-    pert: pd.Series,
-    base: pd.Series,
-    n_bootstrap: int = 1000
-) -> dict:
-    """
-    Bootstrap hypothesis test comparing MI(orig,pert) vs MI(orig,base).
-
-    Args:
-        orig: Original responses
-        pert: Perturbation responses
-        base: Baseline responses
-        n_bootstrap: Number of bootstrap iterations
-
-    Returns:
-        dict: {
-            'mi_perturbation': float,
-            'mi_baseline': float,
-            'observed_diff': float,
-            'ci_low': float,
-            'ci_high': float,
-            'p_value': float
-        }
-    """
-    n = len(orig)
-    diffs = []
-
-    for _ in range(n_bootstrap):
-        indices = np.random.choice(n, n, replace=True)
-        mi_pert = calculate_mi(
-            orig.iloc[indices].reset_index(drop=True),
-            pert.iloc[indices].reset_index(drop=True)
-        )
-        mi_base = calculate_mi(
-            orig.iloc[indices].reset_index(drop=True),
-            base.iloc[indices].reset_index(drop=True)
-        )
-        diffs.append(mi_pert - mi_base)
-
-    # Observed difference
-    observed_diff = calculate_mi(orig, pert) - calculate_mi(orig, base)
-
-    # 95% CI
-    ci_low = np.percentile(diffs, 2.5)
-    ci_high = np.percentile(diffs, 97.5)
-
-    # Two-tailed p-value
-    if observed_diff >= 0:
-        p_value = np.mean(np.array(diffs) <= 0) * 2
+    orig_key = f'original_{task}'
+    pert_key = f'{pert_type}_{task}'
+    if baseline_type == 'calibrated':
+        base_key = f'{pert_type}_baseline_{task}'
     else:
-        p_value = np.mean(np.array(diffs) >= 0) * 2
-    p_value = min(p_value, 1.0)
+        base_key = f'neutral_{task}'
 
-    return {
-        'mi_perturbation': calculate_mi(orig, pert),
-        'mi_baseline': calculate_mi(orig, base),
-        'observed_diff': observed_diff,
-        'ci_low': ci_low,
-        'ci_high': ci_high,
-        'p_value': p_value
-    }
+    for r in eval_results:
+        if orig_key not in r or pert_key not in r or base_key not in r:
+            continue
+
+        orig_binary.append(majority_vote(r[orig_key]['binary_answers']))
+        pert_binary.append(majority_vote(r[pert_key]['binary_answers']))
+        base_binary.append(majority_vote(r[base_key]['binary_answers']))
+
+        orig_probs.append(r[orig_key]['logit_probs'])
+        pert_probs.append(r[pert_key]['logit_probs'])
+        base_probs.append(r[base_key]['logit_probs'])
+
+    return (np.array(orig_binary), np.array(pert_binary), np.array(base_binary),
+            np.array(orig_probs), np.array(pert_probs), np.array(base_probs))
 
 
-def run_analysis(dataset_path: str, output_path: str):
-    """
-    Run full bootstrap MI analysis.
+def run_analysis(eval_path, output_path):
+    """Run full analysis with all 5 metrics, both baselines, BH correction.
 
     Args:
-        dataset_path: Path to data_with_baselines.csv
+        eval_path: Path to JSON evaluation results from main_evaluate.py
         output_path: Path for output Excel file
     """
-    df = pd.read_csv(dataset_path)
-    df = df[df['dataset'] != 'conversational']
-
-    # Mapping
-    perturbation_types = {
-        2: 'gender_swap',
-        3: 'gender_remove',
-        4: 'uncertain',
-        5: 'colorful'
-    }
-    baseline_mapping = {2: 6, 3: 7, 4: 8, 5: 9}
-
-    models = ['LLAMA3', 'LLAMA3-70']
-    tasks = ['MANAGE', 'VISIT', 'RESOURCE']
+    with open(eval_path, 'r') as f:
+        eval_results = json.load(f)
 
     results = []
 
-    for pert_id, pert_name in perturbation_types.items():
-        base_id = baseline_mapping[pert_id]
+    for pert_type in PERTURBATION_TYPES:
+        for baseline_type in ['calibrated', 'neutral']:
+            for task in TASKS:
+                vectors = _extract_vectors(
+                    eval_results, pert_type, baseline_type, task
+                )
+                orig_bin, pert_bin, base_bin = vectors[:3]
+                orig_prob, pert_prob, base_prob = vectors[3:]
 
-        for model in models:
-            for task in tasks:
-                col = f'{model}_{task}'
-
-                # Get aligned data by context_id
-                originals = df[df['dataset_id'] == 1].set_index(['dataset', 'context_id'])
-                perturbations = df[df['dataset_id'] == pert_id].set_index(['dataset', 'context_id'])
-                baselines = df[df['dataset_id'] == base_id].set_index(['dataset', 'context_id'])
-
-                # Find common context_ids
-                common_idx = originals.index.intersection(perturbations.index).intersection(baselines.index)
-
-                if len(common_idx) == 0:
-                    print(f"Warning: No common cases for {pert_name}, {model}, {task}")
+                n_cases = len(orig_bin)
+                if n_cases == 0:
                     continue
 
-                orig_vals = originals.loc[common_idx, col].reset_index(drop=True)
-                pert_vals = perturbations.loc[common_idx, col].reset_index(drop=True)
-                base_vals = baselines.loc[common_idx, col].reset_index(drop=True)
+                # Population metrics (binary vectors)
+                for name, module in POPULATION_METRICS.items():
+                    test_result = module.bootstrap_test(
+                        orig_bin, pert_bin, base_bin
+                    )
+                    results.append({
+                        'perturbation_type': pert_type,
+                        'baseline_type': baseline_type,
+                        'task': task,
+                        'metric': name,
+                        'n_cases': n_cases,
+                        'observed_diff': test_result['observed_diff'],
+                        'p_value': test_result['p_value'],
+                        'ci_low': test_result.get('ci_low'),
+                        'ci_high': test_result.get('ci_high'),
+                        'statistic_perturbation': test_result['statistic_perturbation'],
+                        'statistic_baseline': test_result['statistic_baseline'],
+                    })
 
-                # Skip if any NaN
-                if orig_vals.isna().any() or pert_vals.isna().any() or base_vals.isna().any():
-                    print(f"Warning: NaN values for {pert_name}, {model}, {task}")
-                    continue
+                # Sample metrics (probability vectors)
+                for name, module in SAMPLE_METRICS.items():
+                    test_result = module.paired_ttest(
+                        orig_prob, pert_prob, base_prob
+                    )
+                    results.append({
+                        'perturbation_type': pert_type,
+                        'baseline_type': baseline_type,
+                        'task': task,
+                        'metric': name,
+                        'n_cases': n_cases,
+                        'observed_diff': test_result['observed_diff'],
+                        'p_value': test_result['p_value'],
+                        'ci_low': None,
+                        'ci_high': None,
+                        'statistic_perturbation': test_result['mean_perturbation'],
+                        'statistic_baseline': test_result['mean_baseline'],
+                    })
 
-                # Run bootstrap test
-                test_result = bootstrap_mi_test(orig_vals, pert_vals, base_vals)
-
-                results.append({
-                    'perturbation_type': pert_name,
-                    'model': model,
-                    'task': task,
-                    'n_cases': len(common_idx),
-                    **test_result
-                })
-
-    # Save results
     results_df = pd.DataFrame(results)
+
+    # Apply BH correction per metric x baseline_type cell
+    # (each cell has 4 perturbation_types x 3 tasks = 12 p-values)
+    results_df['p_value_bh'] = np.nan
+    for metric_name in list(POPULATION_METRICS) + list(SAMPLE_METRICS):
+        for baseline_type in ['calibrated', 'neutral']:
+            mask = (
+                (results_df['metric'] == metric_name)
+                & (results_df['baseline_type'] == baseline_type)
+            )
+            if mask.sum() > 0:
+                raw_pvals = results_df.loc[mask, 'p_value'].values
+                results_df.loc[mask, 'p_value_bh'] = benjamini_hochberg(raw_pvals)
+
     results_df.to_excel(output_path, index=False)
     print(f"Results saved to: {output_path}")
 
-    # Print summary
     print("\n" + "=" * 60)
     print("Summary")
     print("=" * 60)
     for _, row in results_df.iterrows():
-        sig = "***" if row['p_value'] < 0.001 else "**" if row['p_value'] < 0.01 else "*" if row['p_value'] < 0.05 else ""
-        print(f"{row['perturbation_type']:15} {row['model']:10} {row['task']:10} "
-              f"diff={row['observed_diff']:+.4f} p={row['p_value']:.4f} {sig}")
+        sig = "***" if row['p_value_bh'] < 0.001 else "**" if row['p_value_bh'] < 0.01 else "*" if row['p_value_bh'] < 0.05 else ""
+        print(f"{row['perturbation_type']:15} {row['baseline_type']:12} {row['task']:10} "
+              f"{row['metric']:10} diff={row['observed_diff']:+.4f} "
+              f"p={row['p_value']:.4f} p_bh={row['p_value_bh']:.4f} {sig}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Bootstrap MI analysis for perturbation vs baseline"
+        description="Perturbation vs baseline analysis with 5 metrics and BH correction"
     )
-    parser.add_argument('--dataset', type=str, default='data_with_baselines.csv',
-                        help='Path to extended dataset')
+    parser.add_argument('--evaluation', type=str, required=True,
+                        help='Path to JSON evaluation results')
     parser.add_argument('--output', type=str, default='results/baseline_analysis.xlsx',
                         help='Output Excel path')
 
     args = parser.parse_args()
 
-    run_analysis(args.dataset, args.output)
+    run_analysis(args.evaluation, args.output)

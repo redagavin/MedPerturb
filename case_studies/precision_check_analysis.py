@@ -1,14 +1,18 @@
-# ABOUTME: Bootstrap MI analysis for precision check (age swap negative control)
+# ABOUTME: Statistical analysis for precision check (age swap negative control) using 5 metrics
 # ABOUTME: Validates that age swap does NOT affect gender detection, confirming measurement precision
 
 import numpy as np
-import pandas as pd
 import json
 import argparse
+import os
 import sys
 
-sys.path.insert(0, '/scratch/yang.zih/cot_faithfulness/MedPerturb/case_studies')
-from baseline_analysis import bootstrap_mi_test
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'code'))
+from metrics import mi, phi, flip_rate
+from metrics import jsd, kl
+
+POPULATION_METRICS = {"mi": mi, "phi": phi, "flip_rate": flip_rate}
+SAMPLE_METRICS = {"jsd": jsd, "kl": kl}
 
 
 def majority_vote(responses):
@@ -17,37 +21,85 @@ def majority_vote(responses):
 
 
 def run_precision_check_analysis(eval_results, n_bootstrap=1000):
-    """
-    Run MI analysis on precision check evaluation results.
+    """Run analysis on precision check evaluation results with all 5 metrics.
 
     Args:
-        eval_results: List of dicts from precision_check_evaluate.py output
-        n_bootstrap: Number of bootstrap iterations
+        eval_results: List of dicts from precision_check_evaluate.py output.
+            Each dict has original_GENDER, age_swap_GENDER,
+            age_swap_baseline_GENDER, neutral_GENDER keys.
+        n_bootstrap: Number of bootstrap iterations for population metrics
 
     Returns:
-        dict with mi_perturbation, mi_baseline, observed_diff, ci_low, ci_high, p_value, n_cases
+        dict: {
+            'n_cases': int,
+            'mi': {'calibrated': {...}, 'neutral': {...}},
+            'phi': {'calibrated': {...}, 'neutral': {...}},
+            'flip_rate': {'calibrated': {...}, 'neutral': {...}},
+            'jsd': {'calibrated': {...}, 'neutral': {...}},
+            'kl': {'calibrated': {...}, 'neutral': {...}},
+        }
     """
-    orig_votes = []
-    age_swap_votes = []
-    baseline_votes = []
+    # Extract binary vectors (majority voted)
+    orig_binary = []
+    age_swap_binary = []
+    calibrated_binary = []
+    neutral_binary = []
+
+    # Extract probability vectors
+    orig_probs = []
+    age_swap_probs = []
+    calibrated_probs = []
+    neutral_probs = []
 
     for r in eval_results:
-        orig_votes.append(majority_vote(r['original_GENDER']['binary_answers']))
-        age_swap_votes.append(majority_vote(r['age_swap_GENDER']['binary_answers']))
-        baseline_votes.append(majority_vote(r['age_swap_baseline_GENDER']['binary_answers']))
+        orig_binary.append(majority_vote(r['original_GENDER']['binary_answers']))
+        age_swap_binary.append(majority_vote(r['age_swap_GENDER']['binary_answers']))
+        calibrated_binary.append(majority_vote(r['age_swap_baseline_GENDER']['binary_answers']))
+        neutral_binary.append(majority_vote(r['neutral_GENDER']['binary_answers']))
 
-    orig = pd.Series(orig_votes)
-    age_swap = pd.Series(age_swap_votes)
-    baseline = pd.Series(baseline_votes)
+        orig_probs.append(r['original_GENDER']['logit_probs'])
+        age_swap_probs.append(r['age_swap_GENDER']['logit_probs'])
+        calibrated_probs.append(r['age_swap_baseline_GENDER']['logit_probs'])
+        neutral_probs.append(r['neutral_GENDER']['logit_probs'])
 
-    result = bootstrap_mi_test(orig, age_swap, baseline, n_bootstrap=n_bootstrap)
-    result['n_cases'] = len(eval_results)
+    orig_bin = np.array(orig_binary)
+    swap_bin = np.array(age_swap_binary)
+    cal_bin = np.array(calibrated_binary)
+    neut_bin = np.array(neutral_binary)
 
-    return result
+    orig_prob = np.array(orig_probs)
+    swap_prob = np.array(age_swap_probs)
+    cal_prob = np.array(calibrated_probs)
+    neut_prob = np.array(neutral_probs)
+
+    baseline_vectors = {
+        'calibrated': (cal_bin, cal_prob),
+        'neutral': (neut_bin, neut_prob),
+    }
+
+    results = {'n_cases': len(eval_results)}
+
+    for name, module in POPULATION_METRICS.items():
+        results[name] = {}
+        for btype, (base_bin, _) in baseline_vectors.items():
+            results[name][btype] = module.bootstrap_test(
+                orig_bin, swap_bin, base_bin, n_bootstrap=n_bootstrap
+            )
+
+    for name, module in SAMPLE_METRICS.items():
+        results[name] = {}
+        for btype, (_, base_prob) in baseline_vectors.items():
+            results[name][btype] = module.paired_ttest(
+                orig_prob, swap_prob, base_prob
+            )
+
+    return results
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Precision check MI analysis (age swap negative control)")
+    parser = argparse.ArgumentParser(
+        description="Precision check analysis (age swap negative control) with 5 metrics"
+    )
     parser.add_argument('--evaluation', type=str, required=True,
                         help='Path to precision check evaluation JSON')
     parser.add_argument('--output', type=str, default='results/precision_check_analysis.xlsx',
@@ -61,28 +113,44 @@ def main():
         eval_results = json.load(f)
     print(f"Loaded {len(eval_results)} evaluation results")
 
-    result = run_precision_check_analysis(eval_results, n_bootstrap=args.n_bootstrap)
+    results = run_precision_check_analysis(eval_results, n_bootstrap=args.n_bootstrap)
 
-    results_df = pd.DataFrame([result])
+    # Flatten to DataFrame for output
+    import pandas as pd
+    rows = []
+    for metric_name in list(POPULATION_METRICS) + list(SAMPLE_METRICS):
+        for btype in ['calibrated', 'neutral']:
+            r = results[metric_name][btype]
+            rows.append({
+                'metric': metric_name,
+                'baseline_type': btype,
+                'n_cases': results['n_cases'],
+                'observed_diff': r['observed_diff'],
+                'p_value': r['p_value'],
+            })
+
+    results_df = pd.DataFrame(rows)
     results_df.to_excel(args.output, index=False)
 
     print("\n" + "=" * 60)
     print("Precision Check Results (Age Swap Negative Control)")
     print("=" * 60)
-    print(f"N cases:              {result['n_cases']}")
-    print(f"MI(orig, age_swap):   {result['mi_perturbation']:.4f}")
-    print(f"MI(orig, base):       {result['mi_baseline']:.4f}")
-    print(f"Difference:           {result['observed_diff']:+.4f}")
-    print(f"95% CI:               [{result['ci_low']:+.4f}, {result['ci_high']:+.4f}]")
-    print(f"p-value:              {result['p_value']:.4f}")
+    print(f"N cases: {results['n_cases']}")
+    for _, row in results_df.iterrows():
+        sig = "***" if row['p_value'] < 0.001 else "**" if row['p_value'] < 0.01 else "*" if row['p_value'] < 0.05 else "ns"
+        print(f"  {row['metric']:10} {row['baseline_type']:12} "
+              f"diff={row['observed_diff']:+.4f} p={row['p_value']:.4f} {sig}")
 
-    sig = "***" if result['p_value'] < 0.001 else "**" if result['p_value'] < 0.01 else "*" if result['p_value'] < 0.05 else "ns"
-    print(f"Significance:         {sig}")
-
-    if result['p_value'] > 0.05:
-        print("\nPRECISION CHECK PASSED: Age swap does not significantly affect gender detection (p > 0.05)")
+    # Overall pass/fail check
+    all_pass = all(
+        results[m][b]['p_value'] > 0.05
+        for m in list(POPULATION_METRICS) + list(SAMPLE_METRICS)
+        for b in ['calibrated', 'neutral']
+    )
+    if all_pass:
+        print("\nPRECISION CHECK PASSED: Age swap does not significantly affect gender detection")
     else:
-        print(f"\nWARNING: Age swap significantly affects gender detection (p = {result['p_value']:.4f})")
+        print("\nWARNING: Some metrics show significant effect of age swap on gender detection")
 
     print(f"\nResults saved to: {args.output}")
 

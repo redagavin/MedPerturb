@@ -1,5 +1,5 @@
-# ABOUTME: Tests for sanity check analysis with all 5 metrics and both baselines
-# ABOUTME: Verifies majority voting, metric integration, and result structure
+# ABOUTME: Tests for precision check analysis (age swap negative control)
+# ABOUTME: Validates all 5 metrics, both baselines, result structure
 
 import pytest
 import numpy as np
@@ -9,8 +9,8 @@ sys.path.insert(0, '/scratch/yang.zih/cot_faithfulness/MedPerturb/case_studies')
 
 
 def _read_source():
-    """Read sanity_check_analysis.py source for inspection tests."""
-    path = os.path.join(os.path.dirname(__file__), '..', '..', 'case_studies', 'sanity_check_analysis.py')
+    """Read precision_check_analysis.py source for inspection tests."""
+    path = os.path.join(os.path.dirname(__file__), '..', '..', 'case_studies', 'precision_check_analysis.py')
     with open(path) as f:
         return f.read()
 
@@ -19,19 +19,19 @@ class TestMajorityVote:
     """Tests for majority voting across seeds."""
 
     def test_majority_yes(self):
-        from sanity_check_analysis import majority_vote
+        from precision_check_analysis import majority_vote
         assert majority_vote([1, 1, 0]) == 1
 
     def test_majority_no(self):
-        from sanity_check_analysis import majority_vote
+        from precision_check_analysis import majority_vote
         assert majority_vote([0, 0, 1]) == 0
 
     def test_unanimous_yes(self):
-        from sanity_check_analysis import majority_vote
+        from precision_check_analysis import majority_vote
         assert majority_vote([1, 1, 1]) == 1
 
     def test_unanimous_no(self):
-        from sanity_check_analysis import majority_vote
+        from precision_check_analysis import majority_vote
         assert majority_vote([0, 0, 0]) == 0
 
 
@@ -45,36 +45,34 @@ class TestUsesAllMetrics:
             assert metric in source, f"Missing metric: {metric}"
 
 
-class TestSanityCheckAnalysis:
+class TestPrecisionCheckAnalysis:
     """Tests for the full analysis pipeline with all metrics."""
 
-    def _make_eval_results(self, n=100, flip_rate=0.7, seed=123):
-        """Create synthetic sanity check evaluation results.
+    def _make_eval_results(self, n=100, seed=42):
+        """Create synthetic precision check evaluation results.
 
-        Simulates gender swap that flips ~flip_rate of answers,
-        with calibrated baseline preserving original answers and
-        neutral baseline adding some noise.
+        For negative control: age swap should NOT affect gender detection,
+        so age_swap answers are mostly the same as original.
         """
         rng = np.random.default_rng(seed)
         eval_results = []
         for i in range(n):
             is_male = 1 if i % 2 == 0 else 0
-            is_female = 1 - is_male
-            # Swap flips answers at given rate
-            swap_val = is_female if rng.random() < flip_rate else is_male
-            # Neutral adds some noise (20% flip)
-            neutral_val = (1 - is_male) if rng.random() < 0.2 else is_male
+            # Age swap preserves gender (5% noise)
+            age_swap_val = (1 - is_male) if rng.random() < 0.05 else is_male
+            # Neutral adds some noise (10% flip)
+            neutral_val = (1 - is_male) if rng.random() < 0.1 else is_male
             eval_results.append({
                 'context_id': f'N{i}',
                 'original_GENDER': {
                     'binary_answers': [is_male, is_male, is_male],
                     'logit_probs': 0.9 if is_male else 0.1,
                 },
-                'gender_swap_GENDER': {
-                    'binary_answers': [swap_val, swap_val, swap_val],
-                    'logit_probs': 0.9 if swap_val else 0.1,
+                'age_swap_GENDER': {
+                    'binary_answers': [age_swap_val, age_swap_val, age_swap_val],
+                    'logit_probs': 0.85 if age_swap_val else 0.15,
                 },
-                'gender_swap_baseline_GENDER': {
+                'age_swap_baseline_GENDER': {
                     'binary_answers': [is_male, is_male, is_male],
                     'logit_probs': 0.9 if is_male else 0.1,
                 },
@@ -87,10 +85,10 @@ class TestSanityCheckAnalysis:
 
     def test_returns_results_for_all_metrics(self):
         """Result dict must have entries for all 5 metrics."""
-        from sanity_check_analysis import run_sanity_check_analysis
+        from precision_check_analysis import run_precision_check_analysis
 
         eval_results = self._make_eval_results()
-        results = run_sanity_check_analysis(eval_results)
+        results = run_precision_check_analysis(eval_results)
 
         expected_metrics = {'mi', 'phi', 'flip_rate', 'jsd', 'kl'}
         actual_metrics = set(results.keys())
@@ -100,10 +98,10 @@ class TestSanityCheckAnalysis:
 
     def test_returns_results_for_both_baselines(self):
         """Each metric must have results for both calibrated and neutral baselines."""
-        from sanity_check_analysis import run_sanity_check_analysis
+        from precision_check_analysis import run_precision_check_analysis
 
         eval_results = self._make_eval_results()
-        results = run_sanity_check_analysis(eval_results)
+        results = run_precision_check_analysis(eval_results)
 
         for metric in ['mi', 'phi', 'flip_rate', 'jsd', 'kl']:
             metric_result = results[metric]
@@ -116,10 +114,10 @@ class TestSanityCheckAnalysis:
 
     def test_each_metric_has_p_value(self):
         """Each metric x baseline result must have p_value."""
-        from sanity_check_analysis import run_sanity_check_analysis
+        from precision_check_analysis import run_precision_check_analysis
 
         eval_results = self._make_eval_results()
-        results = run_sanity_check_analysis(eval_results)
+        results = run_precision_check_analysis(eval_results)
 
         for metric in ['mi', 'phi', 'flip_rate', 'jsd', 'kl']:
             for baseline in ['calibrated', 'neutral']:
@@ -131,10 +129,10 @@ class TestSanityCheckAnalysis:
 
     def test_each_metric_has_observed_diff(self):
         """Each metric x baseline result must have observed_diff."""
-        from sanity_check_analysis import run_sanity_check_analysis
+        from precision_check_analysis import run_precision_check_analysis
 
         eval_results = self._make_eval_results()
-        results = run_sanity_check_analysis(eval_results)
+        results = run_precision_check_analysis(eval_results)
 
         for metric in ['mi', 'phi', 'flip_rate', 'jsd', 'kl']:
             for baseline in ['calibrated', 'neutral']:
@@ -145,8 +143,8 @@ class TestSanityCheckAnalysis:
 
     def test_n_cases_populated(self):
         """Result must contain n_cases."""
-        from sanity_check_analysis import run_sanity_check_analysis
+        from precision_check_analysis import run_precision_check_analysis
 
         eval_results = self._make_eval_results(n=50)
-        results = run_sanity_check_analysis(eval_results)
+        results = run_precision_check_analysis(eval_results)
         assert results['n_cases'] == 50

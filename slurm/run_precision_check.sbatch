@@ -26,7 +26,8 @@ echo "Node: $(hostname)"
 
 nvidia-smi
 
-PYTHON="/scratch/yang.zih/miniconda3/envs/cot/bin/python3.11"
+source ~/.bashrc
+conda activate cot
 
 MODEL=${1:-"meta-llama/Llama-3.1-8B-Instruct"}
 
@@ -35,12 +36,12 @@ echo ""
 
 cd ${MEDPERTURB_DIR}
 
-$PYTHON code/precision_check_evaluate.py \
+python code/precision_check_evaluate.py \
     --model "${MODEL}" \
     --dataset "data_with_baselines.csv" \
     --age_swap "results/precision_check_age_swap.json" \
     --baselines "results/precision_check_baselines.json" \
-    --output "results/precision_check_eval_${SLURM_ARRAY_TASK_ID}.json" \
+    --output_dir "results" \
     --checkpoint_dir "checkpoints/precision_check"
 
 EXIT_CODE=$?

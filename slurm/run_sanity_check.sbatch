@@ -39,9 +39,8 @@ cd ${MEDPERTURB_DIR}
 python code/sanity_check_evaluate.py \
     --model "${MODEL}" \
     --dataset "data_with_baselines.csv" \
-    --output "results/sanity_check_eval_${SLURM_ARRAY_TASK_ID}.json" \
-    --checkpoint_dir "checkpoints/sanity_check" \
-    --checkpoint_freq 10
+    --output_dir "results" \
+    --checkpoint_dir "checkpoints/sanity_check"
 
 EXIT_CODE=$?
 

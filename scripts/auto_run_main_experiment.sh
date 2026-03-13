@@ -1,6 +1,6 @@
 #!/bin/bash
-# ABOUTME: Automated sanity check pipeline with auto-relaunch
-# ABOUTME: Runs gender question evaluation with model-tagged shards and merge step
+# ABOUTME: Automated main experiment pipeline with auto-relaunch
+# ABOUTME: Runs main evaluation across GPU shards and merges results
 
 set -e
 
@@ -27,11 +27,11 @@ cd "${MEDPERTURB_DIR}"
 
 TOTAL_GPUS=4
 CHECK_INTERVAL=300
-JOB_NAME="sanity_check"
+JOB_NAME="main_experiment"
 MODEL_SHORT=$(echo $MODEL | sed 's/.*\///' | tr '[:upper:]' '[:lower:]' | tr '-' '_')
 
 echo "======================================"
-echo "Sanity Check Pipeline"
+echo "Main Experiment Pipeline"
 echo "======================================"
 echo "Model: ${MODEL}"
 echo "Test mode: ${TEST_MODE}"
@@ -41,22 +41,22 @@ echo ""
 source ~/.bashrc
 conda activate cot
 
-mkdir -p results logs checkpoints/sanity_check
+mkdir -p results logs checkpoints/main
 
 # ==========================================
 # STEP 1: Run Evaluation
 # ==========================================
 echo "======================================"
-echo "STEP 1: Gender Question Evaluation"
+echo "STEP 1: Main Experiment Evaluation"
 echo "======================================"
 
 if [ "$TEST_MODE" = true ]; then
     srun --partition=frink --gres=gpu:1 --cpus-per-task=8 --mem=80G --time=2:00:00 \
-        bash -c "source ~/.bashrc && conda activate cot && python code/sanity_check_evaluate.py \
+        bash -c "source ~/.bashrc && conda activate cot && python code/main_evaluate.py \
             --model ${MODEL} \
             --dataset data_with_baselines.csv \
             --output_dir results \
-            --checkpoint_dir checkpoints/sanity_check \
+            --checkpoint_dir checkpoints/main \
             --checkpoint_freq 1 \
             --gpu_id 0 \
             --total_gpus 1 \
@@ -64,7 +64,7 @@ if [ "$TEST_MODE" = true ]; then
 else
     # Production: sbatch with auto-relaunch
     check_completion() {
-        COMPLETE_COUNT=$(ls -1 checkpoints/sanity_check/sanity_check_eval_${MODEL_SHORT}_gpu*_of_${TOTAL_GPUS}_COMPLETE 2>/dev/null | wc -l)
+        COMPLETE_COUNT=$(ls -1 checkpoints/main/main_eval_${MODEL_SHORT}_gpu*_of_${TOTAL_GPUS}_COMPLETE 2>/dev/null | wc -l)
         [ "$COMPLETE_COUNT" -eq $TOTAL_GPUS ]
     }
 
@@ -82,7 +82,7 @@ else
             break
         fi
 
-        COMPLETE_COUNT=$(ls -1 checkpoints/sanity_check/sanity_check_eval_${MODEL_SHORT}_gpu*_of_${TOTAL_GPUS}_COMPLETE 2>/dev/null | wc -l)
+        COMPLETE_COUNT=$(ls -1 checkpoints/main/main_eval_${MODEL_SHORT}_gpu*_of_${TOTAL_GPUS}_COMPLETE 2>/dev/null | wc -l)
         echo "Progress: ${COMPLETE_COUNT}/${TOTAL_GPUS} GPUs complete"
 
         if check_jobs_running; then
@@ -91,7 +91,7 @@ else
             sleep $CHECK_INTERVAL
         else
             echo "Launching jobs..."
-            SUBMITTED=$(sbatch slurm/run_sanity_check.sbatch "${MODEL}" | awk '{print $NF}')
+            SUBMITTED=$(sbatch slurm/run_main_experiment.sbatch "${MODEL}" | awk '{print $NF}')
             echo "Submitted job: ${SUBMITTED}"
             sleep 60
 
@@ -117,10 +117,11 @@ echo "======================================"
 echo "STEP 2: Merge Results"
 echo "======================================"
 
-MERGED_OUTPUT="results/sanity_check_evaluation_${MODEL_SHORT}.json"
+MERGED_OUTPUT="results/main_evaluation_${MODEL_SHORT}.json"
 
 if [ "$TEST_MODE" = true ]; then
-    TEST_FILE=$(ls -1 results/sanity_check_eval_${MODEL_SHORT}_gpu0_of_1.json 2>/dev/null | head -1)
+    # In test mode, single-GPU result already has the model-tagged filename
+    TEST_FILE=$(ls -1 results/main_eval_${MODEL_SHORT}_gpu0_of_1.json 2>/dev/null | head -1)
     if [ -n "${TEST_FILE}" ]; then
         cp "${TEST_FILE}" "${MERGED_OUTPUT}"
         echo "Test mode: copied to ${MERGED_OUTPUT}"
@@ -132,7 +133,7 @@ else
 import json
 import glob
 
-result_files = glob.glob('results/sanity_check_eval_${MODEL_SHORT}_gpu*_of_*.json')
+result_files = glob.glob('results/main_eval_${MODEL_SHORT}_gpu*_of_*.json')
 
 print(f"Found {len(result_files)} result files")
 

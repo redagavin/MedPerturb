@@ -102,6 +102,18 @@ class TestPairedTtest:
             mod.paired_ttest(np.array([]), np.array([]), np.array([]))
 
     @pytest.mark.parametrize("metric_module", ["jsd", "kl"])
+    def test_out_of_bounds_probs_raise(self, metric_module):
+        """Probabilities outside [0, 1] should raise ValueError."""
+        mod = __import__(f"metrics.{metric_module}", fromlist=["paired_ttest"])
+        valid = np.array([0.5, 0.6, 0.7])
+        with pytest.raises(ValueError, match="Probabilities must be in"):
+            mod.paired_ttest(np.array([0.5, 1.5, 0.3]), valid, valid)
+        with pytest.raises(ValueError, match="Probabilities must be in"):
+            mod.paired_ttest(valid, np.array([-0.1, 0.5, 0.5]), valid)
+        with pytest.raises(ValueError, match="Probabilities must be in"):
+            mod.paired_ttest(valid, valid, np.array([0.5, 0.5, 2.0]))
+
+    @pytest.mark.parametrize("metric_module", ["jsd", "kl"])
     def test_mismatched_lengths_raise(self, metric_module):
         """Mismatched array lengths should raise ValueError."""
         mod = __import__(f"metrics.{metric_module}", fromlist=["paired_ttest"])

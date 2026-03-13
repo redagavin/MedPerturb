@@ -122,6 +122,30 @@ class TestNeutralBaseline:
         assert expected.endswith("Patient has fever.")
 
 
+class TestCheckpointFrequency:
+    """Checkpoint frequency uses new_count, not enumerate index."""
+
+    def test_uses_new_count_for_checkpoint(self):
+        """Checkpoint triggers on new_count, not loop index (avoids wrong cadence after resume)."""
+        source = _read_source('main_evaluate.py')
+        tree = ast.parse(source)
+        # Find the checkpoint_freq modulo — should be new_count, not (i+1)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Mod):
+                # The left operand of % should reference new_count
+                parent = None
+                for parent_node in ast.walk(tree):
+                    for child in ast.iter_child_nodes(parent_node):
+                        if child is node:
+                            parent = parent_node
+                            break
+                break
+        # Simpler: check source text patterns
+        assert 'new_count %' in source or 'new_count%' in source
+        assert '(i + 1) % args.checkpoint_freq' not in source
+        assert '(i+1) % args.checkpoint_freq' not in source
+
+
 class TestUsesEvalUtils:
     """main_evaluate.py uses shared eval_utils."""
 

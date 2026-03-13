@@ -17,13 +17,20 @@ def validate_binary_vectors(x, y):
 
 
 def validate_prob_arrays(orig, pert, base):
-    """Validate probability arrays are non-empty and equal length."""
+    """Validate probability arrays are non-empty, equal length, and in [0, 1]."""
     if len(orig) == 0:
         raise ValueError("Input arrays must not be empty")
     if len(orig) != len(pert) or len(orig) != len(base):
         raise ValueError(
             f"Array lengths must match: {len(orig)}, {len(pert)}, {len(base)}"
         )
+    for name, arr in [("orig", orig), ("pert", pert), ("base", base)]:
+        a = np.asarray(arr)
+        if np.any(a < 0) or np.any(a > 1):
+            raise ValueError(
+                f"Probabilities must be in [0, 1], {name} has range "
+                f"[{a.min()}, {a.max()}]"
+            )
 
 
 def bootstrap_test_common(compute_fn, orig, pert, base, n_bootstrap=1000, seed=42):

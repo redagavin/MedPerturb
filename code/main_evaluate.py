@@ -129,13 +129,15 @@ def main():
     # Evaluate
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     os.makedirs(args.output_dir, exist_ok=True)
-    for i, sample in enumerate(tqdm(samples, desc=f"GPU {args.gpu_id}")):
+    new_count = 0
+    for sample in tqdm(samples, desc=f"GPU {args.gpu_id}"):
         if sample["context_id"] in completed:
             continue
         result = evaluate_main_experiment_sample(evaluator, sample)
         results.append(result)
         completed.add(sample["context_id"])
-        if (i + 1) % args.checkpoint_freq == 0:
+        new_count += 1
+        if new_count % args.checkpoint_freq == 0:
             save_checkpoint(ckpt_path, results, completed)
 
     save_checkpoint(ckpt_path, results, completed)

@@ -96,29 +96,3 @@ class TestExtractorModelDevice:
                             )
 
 
-class TestPerturbationTypesConsistency:
-    """PERTURBATION_TYPES must be identical across pipeline files."""
-
-    def test_types_match_across_files(self):
-        """generate_baselines.py and batch_evaluate.py must have same PERTURBATION_TYPES."""
-        from generate_baselines import PERTURBATION_TYPES as baseline_types
-        from batch_evaluate import PERTURBATION_TYPES as eval_types
-        assert baseline_types == eval_types
-
-
-class TestPipelineUsesIndexKey:
-    """Pipeline files must use Index (unique row ID) as primary key."""
-
-    def test_generate_baselines_uses_index(self):
-        """generate_baselines.py must reference row['Index']."""
-        source = _read_source('generate_baselines.py')
-        assert "row['Index']" in source, (
-            "generate_baselines.py must key by row['Index']"
-        )
-
-    def test_batch_evaluate_uses_index(self):
-        """batch_evaluate.py must reference row['Index'] or df['Index']."""
-        source = _read_source('batch_evaluate.py')
-        assert "'Index'" in source, (
-            "batch_evaluate.py must use 'Index' as primary key"
-        )

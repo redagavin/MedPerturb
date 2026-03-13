@@ -198,10 +198,12 @@ echo "======================================"
 echo "STEP 4: Analysis & Plots"
 echo "======================================"
 
-python case_studies/dose_response_analysis.py \
-    --evaluation "${MERGED_OUTPUT}" \
-    --output results/dose_response_analysis.xlsx \
-    --plot_prefix results/dose_response
+srun --partition=frink --cpus-per-task=4 --mem=16G --time=1:00:00 \
+    bash -c "source ~/.bashrc && conda activate cot && cd ${MEDPERTURB_DIR} && \
+    python case_studies/dose_response_analysis.py \
+        --evaluation '${MERGED_OUTPUT}' \
+        --output results/dose_response_analysis.xlsx \
+        --plot_prefix results/dose_response"
 
 echo ""
 echo "======================================"

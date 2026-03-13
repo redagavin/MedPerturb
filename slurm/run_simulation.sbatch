@@ -8,8 +8,8 @@
 #SBATCH --error=logs/simulation_%j.err
 #SBATCH --signal=INT@300
 
-# ABOUTME: SLURM script for Monte Carlo power simulation of bootstrap MI test
-# ABOUTME: CPU-only job, estimates false positive rate and power at n=100
+# ABOUTME: SLURM script for Monte Carlo power simulation of all 5 metrics
+# ABOUTME: CPU-only job, estimates false positive rate and power
 
 echo "========================================"
 echo "MI Power Simulation (Monte Carlo)"

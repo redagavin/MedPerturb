@@ -1,5 +1,5 @@
-# ABOUTME: Unified main experiment evaluation for all text variants per sample
-# ABOUTME: Replaces batch_evaluate.py (V1) and evaluate_baselines.py (V2)
+# ABOUTME: Main experiment evaluation for all text variants per sample
+# ABOUTME: Evaluates originals, perturbations, calibrated baselines, and neutral baseline
 
 import argparse
 import json

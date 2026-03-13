@@ -63,7 +63,8 @@ def load_sanity_check_data(dataset_path):
     baselines = df[df['dataset_id'] == 6].set_index('context_id')
 
     # Only include samples that have all three versions
-    common = originals.index.intersection(swaps.index).intersection(baselines.index)
+    # Sorted for deterministic SLURM sharding across restarts
+    common = sorted(originals.index.intersection(swaps.index).intersection(baselines.index))
 
     samples = []
     for cid in common:
@@ -201,6 +202,7 @@ def main():
 
     # Evaluate
     print(f"\nEvaluating {len(samples)} samples...")
+    new_count = 0
     for sample in tqdm(samples, desc=f"GPU {args.gpu_id}"):
         if sample['context_id'] in completed:
             continue
@@ -208,8 +210,9 @@ def main():
         result = evaluate_sanity_check_sample(evaluator, sample)
         results.append(result)
         completed.add(sample['context_id'])
+        new_count += 1
 
-        if len(results) % args.checkpoint_freq == 0:
+        if new_count % args.checkpoint_freq == 0:
             save_checkpoint(ckpt_path, results, completed)
 
     # Final save

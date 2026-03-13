@@ -171,6 +171,13 @@ class TestBootstrapTest:
             mod.bootstrap_test(np.array([]), np.array([]), np.array([]),
                                n_bootstrap=10, seed=42)
 
+    @pytest.mark.parametrize("metric_module", ["mi", "phi", "flip_rate"])
+    def test_non_binary_values_raise(self, metric_module):
+        """Non-binary values (not 0 or 1) should raise ValueError."""
+        mod = __import__(f"metrics.{metric_module}", fromlist=["compute"])
+        with pytest.raises(ValueError, match="must contain only 0 and 1"):
+            mod.compute(np.array([0, 1, 2, 3]), np.array([0, 1, 0, 1]))
+
     def test_mi_significant_when_pert_flips(self):
         """MI detects when perturbation causes flips but baseline doesn't."""
         rng = np.random.default_rng(42)

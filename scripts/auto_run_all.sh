@@ -10,6 +10,9 @@ if [ "${1:-}" = "--test" ]; then
     TEST_FLAG="--test"
 fi
 
+source ~/.bashrc
+conda activate cot
+
 cd /scratch/yang.zih/cot_faithfulness/MedPerturb
 
 # Step 1: Launch simulations in parallel (CPU, fire-and-forget)

@@ -5,11 +5,15 @@ import numpy as np
 
 
 def validate_binary_vectors(x, y):
-    """Validate inputs are non-empty arrays of equal length."""
+    """Validate inputs are non-empty equal-length arrays of 0s and 1s."""
     if len(x) == 0:
         raise ValueError("Input arrays must not be empty")
     if len(x) != len(y):
         raise ValueError(f"Array lengths must match: {len(x)} != {len(y)}")
+    x_arr, y_arr = np.asarray(x), np.asarray(y)
+    vals = np.unique(np.concatenate([x_arr, y_arr]))
+    if not np.all(np.isin(vals, [0, 1])):
+        raise ValueError(f"Arrays must contain only 0 and 1, got values: {vals}")
 
 
 def validate_prob_arrays(orig, pert, base):
@@ -25,10 +29,9 @@ def validate_prob_arrays(orig, pert, base):
 def bootstrap_test_common(compute_fn, orig, pert, base, n_bootstrap=1000, seed=42):
     """Bootstrap percentile test comparing compute_fn(orig,pert) vs compute_fn(orig,base).
 
-    Two-tailed test with fixed random seed. The bootstrap distribution is centered
-    on the observed statistic. P-value = proportion of bootstrap resamples where
-    the difference falls on the opposite side of zero from the observed difference,
-    doubled for two-tailed test.
+    Two-tailed test with fixed random seed. P-value = proportion of bootstrap
+    resamples where the difference falls on the opposite side of zero from the
+    observed difference, doubled for two-tailed test.
     """
     rng = np.random.default_rng(seed)
     orig = np.asarray(orig)

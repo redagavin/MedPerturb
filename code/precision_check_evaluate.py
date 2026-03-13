@@ -220,6 +220,7 @@ def main():
 
     # Evaluate
     print(f"\nEvaluating {len(samples)} samples...")
+    new_count = 0
     for sample in tqdm(samples, desc=f"GPU {args.gpu_id}"):
         if sample['context_id'] in completed:
             continue
@@ -227,8 +228,9 @@ def main():
         result = evaluate_precision_check_sample(evaluator, sample)
         results.append(result)
         completed.add(sample['context_id'])
+        new_count += 1
 
-        if len(results) % args.checkpoint_freq == 0:
+        if new_count % args.checkpoint_freq == 0:
             save_checkpoint(ckpt_path, results, completed)
 
     # Final save

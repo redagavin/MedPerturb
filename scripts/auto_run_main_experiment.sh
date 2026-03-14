@@ -84,7 +84,7 @@ else
             break
         fi
 
-        COMPLETE_COUNT=$(ls -1 checkpoints/main/main_eval_${MODEL_SHORT}_gpu*_of_${TOTAL_GPUS}_COMPLETE 2>/dev/null | wc -l)
+        COMPLETE_COUNT=$(ls -1 checkpoints/main/main_eval_${MODEL_SHORT}_gpu*_of_${TOTAL_GPUS}_COMPLETE 2>/dev/null | wc -l) || true
         echo "Progress: ${COMPLETE_COUNT}/${TOTAL_GPUS} GPUs complete"
 
         if check_jobs_running; then

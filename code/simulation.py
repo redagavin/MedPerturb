@@ -23,6 +23,7 @@ def generate_responses(
     beta_gender: float,
     rng: np.random.Generator,
     sigma: float = 0.0,
+    sigma_pert: float = 0.0,
 ) -> dict:
     """Generate synthetic responses from the logistic generative model.
 
@@ -34,6 +35,9 @@ def generate_responses(
         p_base_i = sigmoid(beta0 + beta1 * z_i + epsilon_base_i)
         y_orig ~ Bernoulli(p_orig_i), y_pert ~ Bernoulli(p_pert_i), etc.
 
+    sigma controls baseline noise (paraphrase/insertion variation).
+    sigma_pert controls perturbation noise (separate from the targeted effect).
+
     Returns dict with both binary vectors (for per-population metrics)
     and probability vectors (for per-sample metrics).
     """
@@ -42,8 +46,7 @@ def generate_responses(
 
     logit_orig = beta0 + beta1 * z
 
-    # Both arms get independent noise so they are symmetric under H0
-    epsilon_pert = rng.normal(0, sigma, size=n_cases) if sigma > 0 else 0.0
+    epsilon_pert = rng.normal(0, sigma_pert, size=n_cases) if sigma_pert > 0 else 0.0
     epsilon_base = rng.normal(0, sigma, size=n_cases) if sigma > 0 else 0.0
     logit_pert = logit_orig + beta_gender + epsilon_pert
     logit_base = logit_orig + epsilon_base
@@ -121,12 +124,15 @@ def run_power_analysis(
     beta0: float = 0.0,
     seed: int = 42,
     sigma_values: list[float] = None,
+    sigma_pert: float = 0.0,
 ) -> pd.DataFrame:
     """Run Monte Carlo simulation across a parameter grid for all 5 metrics.
 
     For each (beta1, sigma, beta_gender) combination, runs n_simulations
     synthetic experiments and records how often each metric test rejects
     at p < 0.05.
+
+    sigma_pert is the perturbation arm noise (separate from baseline sigma).
 
     Returns DataFrame with columns: metric, beta1, sigma, beta_gender,
     detection_rate, mean_p_value.
@@ -148,7 +154,7 @@ def run_power_analysis(
 
                     data = generate_responses(
                         n_cases, beta0, beta1, beta_gender, sim_rng,
-                        sigma=sigma,
+                        sigma=sigma, sigma_pert=sigma_pert,
                     )
                     boot_rng = np.random.default_rng(sim_rng.integers(0, 2**31))
                     pvals = run_single_simulation(
@@ -232,6 +238,8 @@ def main():
     parser.add_argument('--sigma-values', type=float, nargs='+',
                         default=[0.0],
                         help='Baseline noise levels (sigma)')
+    parser.add_argument('--sigma-pert', type=float, default=0.0,
+                        help='Perturbation arm noise level (default 0)')
     parser.add_argument('--output-dir', type=str,
                         default='results/simulation',
                         help='Output directory')
@@ -258,6 +266,7 @@ def main():
         beta1_values=args.beta1_values,
         beta_gender_values=beta_gender_values,
         sigma_values=args.sigma_values,
+        sigma_pert=args.sigma_pert,
         n_simulations=args.n_simulations,
         n_cases=args.n_cases,
         n_bootstrap=args.n_bootstrap,

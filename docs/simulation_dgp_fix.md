@@ -26,18 +26,22 @@ No published results were affected because the default configuration uses `sigma
 
 ## Fix
 
-Both arms now get independent noise terms:
+Added a separate `sigma_pert` parameter (default 0) for perturbation arm noise, independent from `sigma` (baseline noise):
 
 ```python
 # AFTER (correct)
-epsilon_pert = rng.normal(0, sigma, size=n_cases) if sigma > 0 else 0.0
+epsilon_pert = rng.normal(0, sigma_pert, size=n_cases) if sigma_pert > 0 else 0.0
 epsilon_base = rng.normal(0, sigma, size=n_cases) if sigma > 0 else 0.0
 logit_pert = logit_orig + beta_gender + epsilon_pert
 logit_base = logit_orig + epsilon_base
 ```
 
-Under H0, both arms have the same noise distribution, so paired differences are centered at zero — proper null behavior. The null calibration test was also updated to run at `sigma = 0.3` so it exercises non-degenerate JSD/KL paired differences.
+### Design rationale
+
+`sigma` models baseline-specific noise from paraphrasing or neutral sentence insertion — variation that is inherent to the baseline transformation, not part of the targeted perturbation. The perturbation (gender swap, age swap) is a targeted, controlled text change that may introduce its own noise, but of a different magnitude.
+
+Keeping `sigma_pert` separate from `sigma` preserves the original intent: `sigma` controls baseline noise, `sigma_pert` controls perturbation noise. To validate JSD/KL null calibration, set both to the same value (e.g., `--sigma-values 0.3 --sigma-pert 0.3`), which makes both arms symmetric under H0.
 
 ## Lesson
 
-When simulating a controlled experiment with per-sample (continuous) metrics, both arms must be symmetric under H0. The perturbation arm should differ from baseline only by the effect parameter, not by presence/absence of noise.
+When simulating a controlled experiment with per-sample (continuous) metrics, both arms must be symmetric under H0. If the noise parameters differ between arms, JSD/KL will detect the noise asymmetry as a "signal" even when the effect parameter is zero.

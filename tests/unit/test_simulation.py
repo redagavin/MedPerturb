@@ -77,31 +77,44 @@ class TestGenerateResponses:
         # Under null, p_pert and p_orig should have same mean (no shift)
         assert abs(np.mean(result["p_pert"]) - np.mean(result["p_orig"])) < 0.01
 
-    def test_both_arms_have_noise_when_sigma_positive(self):
-        """Both perturbation and baseline arms get independent noise at sigma>0."""
+    def test_sigma_pert_adds_noise_to_perturbation_arm(self):
+        """sigma_pert adds noise to perturbation arm independently of sigma."""
         from simulation import generate_responses
         result = generate_responses(
-            1000, 0.0, 2.0, 0.0, np.random.default_rng(42), sigma=0.3
+            1000, 0.0, 2.0, 0.0, np.random.default_rng(42),
+            sigma=0.0, sigma_pert=0.3,
         )
-        # Under null with sigma>0, both arms should differ from orig
+        # Perturbation arm should differ from orig, baseline should not
         pert_diff = np.mean(np.abs(result["p_pert"] - result["p_orig"]))
         base_diff = np.mean(np.abs(result["p_base"] - result["p_orig"]))
-        assert pert_diff > 0.01, "p_pert should differ from p_orig when sigma>0"
-        assert base_diff > 0.01, "p_base should differ from p_orig when sigma>0"
+        assert pert_diff > 0.01, "p_pert should differ from p_orig when sigma_pert>0"
+        assert base_diff == 0.0, "p_base should equal p_orig when sigma=0"
 
-    def test_null_symmetric_noise_at_sigma_positive(self):
-        """Under H0 with sigma>0, pert and base arms have similar mean divergence from orig."""
+    def test_sigma_pert_defaults_to_zero(self):
+        """Without sigma_pert, perturbation arm has no noise beyond beta_gender."""
         from simulation import generate_responses
         result = generate_responses(
-            10000, 0.0, 2.0, 0.0, np.random.default_rng(42), sigma=0.3
+            1000, 0.0, 2.0, 0.0, np.random.default_rng(42), sigma=0.3,
         )
-        # Both arms should have similar mean absolute difference from orig
+        # sigma_pert defaults to 0, so p_pert == p_orig under H0
+        np.testing.assert_array_equal(result["p_pert"], result["p_orig"])
+        # But baseline should differ
+        base_diff = np.mean(np.abs(result["p_base"] - result["p_orig"]))
+        assert base_diff > 0.01
+
+    def test_both_arms_noisy_when_both_sigmas_positive(self):
+        """When both sigma and sigma_pert are positive, both arms have noise."""
+        from simulation import generate_responses
+        result = generate_responses(
+            10000, 0.0, 2.0, 0.0, np.random.default_rng(42),
+            sigma=0.3, sigma_pert=0.3,
+        )
         pert_diff = np.mean(np.abs(result["p_pert"] - result["p_orig"]))
         base_diff = np.mean(np.abs(result["p_base"] - result["p_orig"]))
-        assert abs(pert_diff - base_diff) < 0.02, (
-            f"Under H0, both arms should have similar noise: "
-            f"pert_diff={pert_diff:.4f}, base_diff={base_diff:.4f}"
-        )
+        assert pert_diff > 0.01
+        assert base_diff > 0.01
+        # With same sigma, noise levels should be similar under H0
+        assert abs(pert_diff - base_diff) < 0.02
 
 
 class TestRunSingleSimulation:
@@ -188,12 +201,13 @@ class TestRunPowerAnalysis:
     def test_null_detection_rate_near_alpha(self):
         """Under null hypothesis (beta_gender=0), detection rate ~ alpha (0.05).
 
-        Uses sigma=0.3 so JSD/KL exercise non-degenerate paired differences.
+        Uses sigma=sigma_pert=0.3 so JSD/KL exercise non-degenerate paired
+        differences (both arms have noise, symmetric under H0).
         """
         from simulation import run_power_analysis
         results = run_power_analysis(
             beta1_values=[2.0], beta_gender_values=[0.0],
-            sigma_values=[0.3],
+            sigma_values=[0.3], sigma_pert=0.3,
             n_simulations=200, n_cases=100, n_bootstrap=200, seed=42,
         )
         for metric in ["mi", "phi", "flip_rate", "jsd", "kl"]:

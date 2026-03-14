@@ -90,17 +90,27 @@ class TestGenerateResponses:
         assert pert_diff > 0.01, "p_pert should differ from p_orig when sigma_pert>0"
         assert base_diff == 0.0, "p_base should equal p_orig when sigma=0"
 
-    def test_sigma_pert_defaults_to_zero(self):
-        """Without sigma_pert, perturbation arm has no noise beyond beta_gender."""
+    def test_sigma_pert_defaults_to_sigma(self):
+        """Without sigma_pert, perturbation arm uses same noise level as baseline."""
         from simulation import generate_responses
         result = generate_responses(
-            1000, 0.0, 2.0, 0.0, np.random.default_rng(42), sigma=0.3,
+            10000, 0.0, 2.0, 0.0, np.random.default_rng(42), sigma=0.3,
         )
-        # sigma_pert defaults to 0, so p_pert == p_orig under H0
-        np.testing.assert_array_equal(result["p_pert"], result["p_orig"])
-        # But baseline should differ
+        # sigma_pert defaults to sigma, so both arms have similar noise
+        pert_diff = np.mean(np.abs(result["p_pert"] - result["p_orig"]))
         base_diff = np.mean(np.abs(result["p_base"] - result["p_orig"]))
+        assert pert_diff > 0.01
         assert base_diff > 0.01
+        assert abs(pert_diff - base_diff) < 0.02
+
+    def test_sigma_pert_zero_overrides_default(self):
+        """Explicit sigma_pert=0 suppresses perturbation noise even when sigma>0."""
+        from simulation import generate_responses
+        result = generate_responses(
+            1000, 0.0, 2.0, 0.0, np.random.default_rng(42),
+            sigma=0.3, sigma_pert=0.0,
+        )
+        np.testing.assert_array_equal(result["p_pert"], result["p_orig"])
 
     def test_both_arms_noisy_when_both_sigmas_positive(self):
         """When both sigma and sigma_pert are positive, both arms have noise."""
@@ -201,13 +211,13 @@ class TestRunPowerAnalysis:
     def test_null_detection_rate_near_alpha(self):
         """Under null hypothesis (beta_gender=0), detection rate ~ alpha (0.05).
 
-        Uses sigma=sigma_pert=0.3 so JSD/KL exercise non-degenerate paired
-        differences (both arms have noise, symmetric under H0).
+        Uses sigma=0.3 (sigma_pert defaults to sigma) so JSD/KL exercise
+        non-degenerate paired differences (both arms have noise, symmetric under H0).
         """
         from simulation import run_power_analysis
         results = run_power_analysis(
             beta1_values=[2.0], beta_gender_values=[0.0],
-            sigma_values=[0.3], sigma_pert=0.3,
+            sigma_values=[0.3],
             n_simulations=200, n_cases=100, n_bootstrap=200, seed=42,
         )
         for metric in ["mi", "phi", "flip_rate", "jsd", "kl"]:

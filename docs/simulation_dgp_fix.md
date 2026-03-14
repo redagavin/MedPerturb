@@ -40,7 +40,7 @@ logit_base = logit_orig + epsilon_base
 
 `sigma` models baseline-specific noise from paraphrasing or neutral sentence insertion — variation that is inherent to the baseline transformation, not part of the targeted perturbation. The perturbation (gender swap, age swap) is a targeted, controlled text change that may introduce its own noise, but of a different magnitude.
 
-Keeping `sigma_pert` separate from `sigma` preserves the original intent: `sigma` controls baseline noise, `sigma_pert` controls perturbation noise. To validate JSD/KL null calibration, set both to the same value (e.g., `--sigma-values 0.3 --sigma-pert 0.3`), which makes both arms symmetric under H0.
+`sigma_pert` defaults to `sigma` when not specified, ensuring both arms are symmetric under H0 by default. This prevents the original bug from silently reappearing when `sigma > 0`. To model asymmetric noise, set `sigma_pert` explicitly (e.g., `--sigma-pert 0` for no perturbation noise).
 
 ## Lesson
 

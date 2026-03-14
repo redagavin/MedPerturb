@@ -23,7 +23,7 @@ def generate_responses(
     beta_gender: float,
     rng: np.random.Generator,
     sigma: float = 0.0,
-    sigma_pert: float = 0.0,
+    sigma_pert: float = None,
 ) -> dict:
     """Generate synthetic responses from the logistic generative model.
 
@@ -36,11 +36,14 @@ def generate_responses(
         y_orig ~ Bernoulli(p_orig_i), y_pert ~ Bernoulli(p_pert_i), etc.
 
     sigma controls baseline noise (paraphrase/insertion variation).
-    sigma_pert controls perturbation noise (separate from the targeted effect).
+    sigma_pert controls perturbation noise (defaults to sigma if not specified).
 
     Returns dict with both binary vectors (for per-population metrics)
     and probability vectors (for per-sample metrics).
     """
+    if sigma_pert is None:
+        sigma_pert = sigma
+
     true_labels = rng.binomial(1, 0.5, size=n_cases)
     z = 2 * true_labels - 1
 
@@ -124,7 +127,7 @@ def run_power_analysis(
     beta0: float = 0.0,
     seed: int = 42,
     sigma_values: list[float] = None,
-    sigma_pert: float = 0.0,
+    sigma_pert: float = None,
 ) -> pd.DataFrame:
     """Run Monte Carlo simulation across a parameter grid for all 5 metrics.
 
@@ -132,7 +135,7 @@ def run_power_analysis(
     synthetic experiments and records how often each metric test rejects
     at p < 0.05.
 
-    sigma_pert is the perturbation arm noise (separate from baseline sigma).
+    sigma_pert is the perturbation arm noise (defaults to sigma if not specified).
 
     Returns DataFrame with columns: metric, beta1, sigma, beta_gender,
     detection_rate, mean_p_value.
@@ -238,8 +241,8 @@ def main():
     parser.add_argument('--sigma-values', type=float, nargs='+',
                         default=[0.0],
                         help='Baseline noise levels (sigma)')
-    parser.add_argument('--sigma-pert', type=float, default=0.0,
-                        help='Perturbation arm noise level (default 0)')
+    parser.add_argument('--sigma-pert', type=float, default=None,
+                        help='Perturbation arm noise level (defaults to sigma)')
     parser.add_argument('--output-dir', type=str,
                         default='results/simulation',
                         help='Output directory')

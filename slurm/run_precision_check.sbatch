@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:h200:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=160G
-#SBATCH --time=4:00:00
+#SBATCH --time=8:00:00
 #SBATCH --array=0-3
 #SBATCH --output=logs/precision_check_%A_%a.out
 #SBATCH --error=logs/precision_check_%A_%a.err

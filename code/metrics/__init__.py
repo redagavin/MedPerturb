@@ -26,6 +26,10 @@ def validate_prob_arrays(orig, pert, base):
         )
     for name, arr in [("orig", orig), ("pert", pert), ("base", base)]:
         a = np.asarray(arr)
+        if np.any(np.isnan(a)):
+            raise ValueError(
+                f"Probabilities must not contain NaN, {name} has NaN values"
+            )
         if np.any(a < 0) or np.any(a > 1):
             raise ValueError(
                 f"Probabilities must be in [0, 1], {name} has range "

@@ -2,7 +2,9 @@
 # ABOUTME: Automated sanity check pipeline with auto-relaunch
 # ABOUTME: Runs gender question evaluation with model-tagged shards and merge step
 
-set -e
+set -euo pipefail
+
+MAX_ITERATIONS=50
 
 # Defaults
 MODEL="meta-llama/Llama-3.1-8B-Instruct"
@@ -74,7 +76,7 @@ else
     }
 
     ITERATION=1
-    while true; do
+    while [ $ITERATION -le $MAX_ITERATIONS ]; do
         echo "[$(date)] Iteration ${ITERATION}"
 
         if check_completion; then
@@ -108,6 +110,11 @@ else
 
         ITERATION=$((ITERATION + 1))
     done
+
+    if ! check_completion; then
+        echo "FATAL: exceeded ${MAX_ITERATIONS} iterations without completion"
+        exit 1
+    fi
 fi
 
 # ==========================================

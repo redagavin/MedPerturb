@@ -30,8 +30,8 @@ def generate_responses(
         true_label_i ~ Bernoulli(0.5)
         z_i = 2 * true_label_i - 1  (maps {0,1} to {-1,+1})
         p_orig_i = sigmoid(beta0 + beta1 * z_i)
-        p_pert_i = sigmoid(beta0 + beta1 * z_i + beta_gender)
-        p_base_i = sigmoid(beta0 + beta1 * z_i + epsilon_i)
+        p_pert_i = sigmoid(beta0 + beta1 * z_i + beta_gender + epsilon_pert_i)
+        p_base_i = sigmoid(beta0 + beta1 * z_i + epsilon_base_i)
         y_orig ~ Bernoulli(p_orig_i), y_pert ~ Bernoulli(p_pert_i), etc.
 
     Returns dict with both binary vectors (for per-population metrics)
@@ -41,13 +41,15 @@ def generate_responses(
     z = 2 * true_labels - 1
 
     logit_orig = beta0 + beta1 * z
-    logit_pert = logit_orig + beta_gender
+
+    # Both arms get independent noise so they are symmetric under H0
+    epsilon_pert = rng.normal(0, sigma, size=n_cases) if sigma > 0 else 0.0
+    epsilon_base = rng.normal(0, sigma, size=n_cases) if sigma > 0 else 0.0
+    logit_pert = logit_orig + beta_gender + epsilon_pert
+    logit_base = logit_orig + epsilon_base
 
     p_orig = sigmoid(logit_orig)
     p_pert = sigmoid(logit_pert)
-
-    epsilon = rng.normal(0, sigma, size=n_cases) if sigma > 0 else 0.0
-    logit_base = logit_orig + epsilon
     p_base = sigmoid(logit_base)
 
     orig = rng.binomial(1, p_orig)

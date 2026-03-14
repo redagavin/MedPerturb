@@ -77,6 +77,32 @@ class TestGenerateResponses:
         # Under null, p_pert and p_orig should have same mean (no shift)
         assert abs(np.mean(result["p_pert"]) - np.mean(result["p_orig"])) < 0.01
 
+    def test_both_arms_have_noise_when_sigma_positive(self):
+        """Both perturbation and baseline arms get independent noise at sigma>0."""
+        from simulation import generate_responses
+        result = generate_responses(
+            1000, 0.0, 2.0, 0.0, np.random.default_rng(42), sigma=0.3
+        )
+        # Under null with sigma>0, both arms should differ from orig
+        pert_diff = np.mean(np.abs(result["p_pert"] - result["p_orig"]))
+        base_diff = np.mean(np.abs(result["p_base"] - result["p_orig"]))
+        assert pert_diff > 0.01, "p_pert should differ from p_orig when sigma>0"
+        assert base_diff > 0.01, "p_base should differ from p_orig when sigma>0"
+
+    def test_null_symmetric_noise_at_sigma_positive(self):
+        """Under H0 with sigma>0, pert and base arms have similar mean divergence from orig."""
+        from simulation import generate_responses
+        result = generate_responses(
+            10000, 0.0, 2.0, 0.0, np.random.default_rng(42), sigma=0.3
+        )
+        # Both arms should have similar mean absolute difference from orig
+        pert_diff = np.mean(np.abs(result["p_pert"] - result["p_orig"]))
+        base_diff = np.mean(np.abs(result["p_base"] - result["p_orig"]))
+        assert abs(pert_diff - base_diff) < 0.02, (
+            f"Under H0, both arms should have similar noise: "
+            f"pert_diff={pert_diff:.4f}, base_diff={base_diff:.4f}"
+        )
+
 
 class TestRunSingleSimulation:
     """Tests for run_single_simulation producing results for all 5 metrics."""
@@ -160,10 +186,14 @@ class TestRunPowerAnalysis:
             )
 
     def test_null_detection_rate_near_alpha(self):
-        """Under null hypothesis (beta_gender=0), detection rate ~ alpha (0.05)."""
+        """Under null hypothesis (beta_gender=0), detection rate ~ alpha (0.05).
+
+        Uses sigma=0.3 so JSD/KL exercise non-degenerate paired differences.
+        """
         from simulation import run_power_analysis
         results = run_power_analysis(
             beta1_values=[2.0], beta_gender_values=[0.0],
+            sigma_values=[0.3],
             n_simulations=200, n_cases=100, n_bootstrap=200, seed=42,
         )
         for metric in ["mi", "phi", "flip_rate", "jsd", "kl"]:

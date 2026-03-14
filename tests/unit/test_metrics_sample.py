@@ -102,6 +102,14 @@ class TestPairedTtest:
             mod.paired_ttest(np.array([]), np.array([]), np.array([]))
 
     @pytest.mark.parametrize("metric_module", ["jsd", "kl"])
+    def test_nan_values_raise(self, metric_module):
+        """NaN values should raise ValueError."""
+        mod = __import__(f"metrics.{metric_module}", fromlist=["paired_ttest"])
+        valid = np.array([0.5, 0.6, 0.7])
+        with pytest.raises(ValueError, match="NaN"):
+            mod.paired_ttest(np.array([0.5, np.nan, 0.3]), valid, valid)
+
+    @pytest.mark.parametrize("metric_module", ["jsd", "kl"])
     def test_out_of_bounds_probs_raise(self, metric_module):
         """Probabilities outside [0, 1] should raise ValueError."""
         mod = __import__(f"metrics.{metric_module}", fromlist=["paired_ttest"])

@@ -2,7 +2,7 @@
 # ABOUTME: Automated main experiment pipeline with auto-relaunch
 # ABOUTME: Runs main evaluation across GPU shards and merges results
 
-set -euo pipefail
+set -eo pipefail
 
 MAX_ITERATIONS=50
 

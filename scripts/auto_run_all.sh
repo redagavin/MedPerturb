@@ -2,7 +2,7 @@
 # ABOUTME: Master orchestration for full experiment matrix
 # ABOUTME: Runs simulations, evaluations (3 scenarios x 2 models), and analysis
 
-set -euo pipefail
+set -eo pipefail
 
 TEST_MODE=false
 if [ "${1:-}" = "--test" ]; then

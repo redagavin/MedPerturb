@@ -2,7 +2,7 @@
 # ABOUTME: Automated sanity check pipeline with auto-relaunch
 # ABOUTME: Runs gender question evaluation with model-tagged shards and merge step
 
-set -euo pipefail
+set -eo pipefail
 
 MAX_ITERATIONS=50
 

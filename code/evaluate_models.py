@@ -192,7 +192,6 @@ class ModelEvaluator:
         outputs = self.extractor_model.generate(
             **inputs,
             max_new_tokens=128,
-            temperature=0.1,
             do_sample=False,
             pad_token_id=self.extractor_tokenizer.eos_token_id
         )

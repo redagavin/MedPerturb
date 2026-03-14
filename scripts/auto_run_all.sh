@@ -42,15 +42,17 @@ echo "=== Running analysis ==="
 for MODEL in "$MODEL_8B" "$MODEL_70B"; do
     MS=$(echo "$MODEL" | sed 's/.*\///' | tr '[:upper:]' '[:lower:]' | tr '-' '_')
     echo "Analysis for ${MS}..."
-    python case_studies/baseline_analysis.py \
-        --evaluation "results/main_evaluation_${MS}.json" \
-        --output "results/baseline_analysis_${MS}.xlsx"
-    python case_studies/sanity_check_analysis.py \
-        --evaluation "results/sanity_check_evaluation_${MS}.json" \
-        --output "results/sanity_check_analysis_${MS}.xlsx"
-    python case_studies/precision_check_analysis.py \
-        --evaluation "results/precision_check_evaluation_${MS}.json" \
-        --output "results/precision_check_analysis_${MS}.xlsx"
+    srun --partition=frink --cpus-per-task=4 --mem=16G --time=1:00:00 \
+        bash -c "source ~/.bashrc && conda activate cot && cd /scratch/yang.zih/cot_faithfulness/MedPerturb && \
+        python case_studies/baseline_analysis.py \
+            --evaluation results/main_evaluation_${MS}.json \
+            --output results/baseline_analysis_${MS}.xlsx && \
+        python case_studies/sanity_check_analysis.py \
+            --evaluation results/sanity_check_evaluation_${MS}.json \
+            --output results/sanity_check_analysis_${MS}.xlsx && \
+        python case_studies/precision_check_analysis.py \
+            --evaluation results/precision_check_evaluation_${MS}.json \
+            --output results/precision_check_analysis_${MS}.xlsx"
 done
 
 echo "=== All complete ==="

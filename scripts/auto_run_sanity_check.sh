@@ -53,7 +53,7 @@ echo "STEP 1: Gender Question Evaluation"
 echo "======================================"
 
 if [ "$TEST_MODE" = true ]; then
-    srun --partition=frink --gres=gpu:1 --cpus-per-task=8 --mem=80G --time=2:00:00 \
+    srun --partition=gpu --gres=gpu:h200:1 --cpus-per-task=8 --mem=160G --time=2:00:00 \
         bash -c "source ~/.bashrc && conda activate cot && python code/sanity_check_evaluate.py \
             --model ${MODEL} \
             --dataset data_with_baselines.csv \
@@ -139,7 +139,7 @@ else
 import json
 import glob
 
-result_files = glob.glob('results/sanity_check_eval_${MODEL_SHORT}_gpu*_of_*.json')
+result_files = glob.glob('results/sanity_check_eval_${MODEL_SHORT}_gpu*_of_${TOTAL_GPUS}.json')
 
 print(f"Found {len(result_files)} result files")
 

@@ -237,6 +237,10 @@ def run_age_swap(dataset_path, tokenizer=None):
         seed = context_id_to_seed(context_id)
         new_age = compute_target_age(original_age, seed)
         swapped_text = replace_age(text, matched_string, new_age, match_start=match_start)
+        # Replace any remaining occurrences of the original age (e.g., in EHR headers
+        # or body text that the primary pattern-based replacement missed).
+        # Negative lookahead (?!\.\d) avoids corrupting decimal numbers like "27.0" in lab values.
+        swapped_text = re.sub(r'\b' + str(original_age) + r'\b(?!\.\d)', str(new_age), swapped_text)
 
         token_change_pct = None
         if tokenizer is not None:

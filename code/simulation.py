@@ -449,6 +449,52 @@ def generate_power_curves(results: pd.DataFrame, output_dir: str) -> None:
             plt.close(fig)
 
 
+def generate_power_curves_v2(results: pd.DataFrame, output_dir: str, condition: str) -> None:
+    """Generate power curve figure for one condition.
+
+    Layout: one subplot per sigma value, 5 metric curves per subplot.
+    """
+    sigma_values = sorted(results["sigma"].unique())
+    n_cols = min(len(sigma_values), 2)
+    n_rows = (len(sigma_values) + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(7 * n_cols, 5 * n_rows), squeeze=False)
+
+    metric_colors = {
+        "jsd": "#1f77b4", "kl": "#ff7f0e",
+        "mi": "#2ca02c", "phi": "#d62728", "flip_rate": "#9467bd",
+    }
+
+    for idx, sigma in enumerate(sigma_values):
+        row, col = divmod(idx, n_cols)
+        ax = axes[row][col]
+        subset = results[results["sigma"] == sigma]
+
+        for metric in ["jsd", "kl", "mi", "phi", "flip_rate"]:
+            m_data = subset[subset["metric"] == metric].sort_values("sigma_pert")
+            ax.plot(
+                m_data["sigma_pert"], m_data["detection_rate"],
+                marker='o', markersize=3, color=metric_colors[metric],
+                label=metric.upper() if metric != "flip_rate" else "Flip Rate",
+            )
+
+        ax.axhline(y=0.05, color='gray', linestyle='--', linewidth=1)
+        ax.axhline(y=0.80, color='lightgray', linestyle=':', linewidth=1)
+        ax.set_xlabel(r'$\sigma_{pert}$')
+        ax.set_ylabel('Detection rate')
+        ax.set_title(f'{condition} ($\\sigma$={sigma})')
+        ax.legend(fontsize=8)
+        ax.set_ylim(-0.02, 1.02)
+        ax.grid(True, alpha=0.3)
+
+    for idx in range(len(sigma_values), n_rows * n_cols):
+        row, col = divmod(idx, n_cols)
+        axes[row][col].set_visible(False)
+
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, f'power_curves_{condition}.png'), dpi=300)
+    plt.close(fig)
+
+
 def main():
     import argparse
 

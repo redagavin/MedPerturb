@@ -528,3 +528,36 @@ class TestRunPowerAnalysisV2:
             assert match["detection_rate"].values[0] == frow["detection_rate"], (
                 f"Mismatch for {frow['metric']} sp={frow['sigma_pert']} s={frow['sigma']}"
             )
+
+
+class TestGeneratePowerCurvesV2:
+    """Tests for v2 power curve figure generation."""
+
+    def test_creates_png_file(self, tmp_path):
+        from simulation import generate_power_curves_v2
+        rows = []
+        for metric in ["mi", "phi", "flip_rate", "jsd", "kl"]:
+            for sp in [0.0, 0.5, 1.0]:
+                for sig in [0.25, 0.5]:
+                    rows.append({
+                        "metric": metric, "sigma_pert": sp, "sigma": sig,
+                        "condition": "MANAGE_8b", "detection_rate": 0.05,
+                        "mean_p_value": 0.5,
+                    })
+        results = pd.DataFrame(rows)
+        generate_power_curves_v2(results, str(tmp_path), "MANAGE_8b")
+        assert (tmp_path / "power_curves_MANAGE_8b.png").exists()
+
+    def test_no_error_on_single_sigma(self, tmp_path):
+        from simulation import generate_power_curves_v2
+        rows = []
+        for metric in ["mi", "phi", "flip_rate", "jsd", "kl"]:
+            for sp in [0.0, 0.5]:
+                rows.append({
+                    "metric": metric, "sigma_pert": sp, "sigma": 0.5,
+                    "condition": "MANAGE_8b", "detection_rate": 0.05,
+                    "mean_p_value": 0.5,
+                })
+        results = pd.DataFrame(rows)
+        generate_power_curves_v2(results, str(tmp_path), "MANAGE_8b")
+        assert (tmp_path / "power_curves_MANAGE_8b.png").exists()

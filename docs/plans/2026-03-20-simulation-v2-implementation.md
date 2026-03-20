@@ -358,8 +358,20 @@ class TestGenerateResponsesV2:
         z_i, y_orig = self._make_z_and_y()
         r1 = generate_responses_v2(z_i, y_orig, 0.5, 0.3, np.random.default_rng(42))
         r2 = generate_responses_v2(z_i, y_orig, 0.5, 0.3, np.random.default_rng(42))
-        for key in result_keys:
+        for key in r1:
             np.testing.assert_array_equal(r1[key], r2[key])
+
+    def test_extreme_z_values(self):
+        """Handles extreme logits (from clamped P(Yes) near 0 or 1) without error."""
+        from simulation import generate_responses_v2
+        z_i = np.array([13.8, -13.8, 0.0, 13.8, -13.8])
+        y_orig = np.array([1, 0, 0, 1, 0])
+        rng = np.random.default_rng(42)
+        result = generate_responses_v2(z_i, y_orig, sigma_pert=1.0, sigma=0.5, rng=rng)
+        for key in ["p_orig", "p_pert", "p_base"]:
+            assert np.all(np.isfinite(result[key]))
+            assert np.all(result[key] >= 0.0)
+            assert np.all(result[key] <= 1.0)
 ```
 
 **Step 2: Run tests to verify they fail**
@@ -485,11 +497,55 @@ class TestComboSeedV2:
         s = _combo_seed_v2(42, 0.5, 0.25, "MANAGE_8b")
         assert isinstance(s, int)
         assert 0 <= s < 2**31
+
+
+class TestRunOneComboV2:
+    """Tests for _run_one_combo_v2 producing correct results structure."""
+
+    def test_returns_list_of_5_metric_dicts(self):
+        """Returns one result dict per metric (5 total)."""
+        from simulation import _run_one_combo_v2
+        rng = np.random.default_rng(42)
+        z_i = rng.normal(0, 1.5, size=50)
+        y_orig = (z_i > 0).astype(int)
+        args = (0.5, 0.3, "MANAGE_8b", 5, 50, 42, z_i, y_orig)
+        results = _run_one_combo_v2(args)
+        assert len(results) == 5
+        metrics = {r["metric"] for r in results}
+        assert metrics == {"mi", "phi", "flip_rate", "jsd", "kl"}
+
+    def test_result_dict_has_required_keys(self):
+        """Each result dict has sigma_pert, sigma, condition, detection_rate, mean_p_value."""
+        from simulation import _run_one_combo_v2
+        rng = np.random.default_rng(42)
+        z_i = rng.normal(0, 1.5, size=50)
+        y_orig = (z_i > 0).astype(int)
+        args = (0.5, 0.3, "MANAGE_8b", 5, 50, 42, z_i, y_orig)
+        results = _run_one_combo_v2(args)
+        for r in results:
+            assert r["sigma_pert"] == 0.5
+            assert r["sigma"] == 0.3
+            assert r["condition"] == "MANAGE_8b"
+            assert 0.0 <= r["detection_rate"] <= 1.0
+            assert 0.0 <= r["mean_p_value"] <= 1.0
+
+    def test_deterministic(self):
+        """Same inputs produce same results."""
+        from simulation import _run_one_combo_v2
+        rng = np.random.default_rng(42)
+        z_i = rng.normal(0, 1.5, size=50)
+        y_orig = (z_i > 0).astype(int)
+        args = (0.5, 0.3, "MANAGE_8b", 10, 50, 42, z_i, y_orig)
+        r1 = _run_one_combo_v2(args)
+        r2 = _run_one_combo_v2(args)
+        for a, b in zip(r1, r2):
+            assert a["detection_rate"] == b["detection_rate"]
+            assert a["mean_p_value"] == b["mean_p_value"]
 ```
 
 **Step 2: Run tests to verify they fail**
 
-Run: `cd /scratch/yang.zih/cot_faithfulness/MedPerturb && conda run -n cot pytest tests/unit/test_simulation.py::TestComboSeedV2 -v`
+Run: `cd /scratch/yang.zih/cot_faithfulness/MedPerturb && conda run -n cot pytest tests/unit/test_simulation.py::TestComboSeedV2 tests/unit/test_simulation.py::TestRunOneComboV2 -v`
 Expected: FAIL — `ImportError: cannot import name '_combo_seed_v2'`
 
 **Step 3: Write minimal implementation**
@@ -546,8 +602,8 @@ def _run_one_combo_v2(args):
 
 **Step 4: Run tests to verify they pass**
 
-Run: `cd /scratch/yang.zih/cot_faithfulness/MedPerturb && conda run -n cot pytest tests/unit/test_simulation.py::TestComboSeedV2 -v`
-Expected: All 5 PASS
+Run: `cd /scratch/yang.zih/cot_faithfulness/MedPerturb && conda run -n cot pytest tests/unit/test_simulation.py::TestComboSeedV2 tests/unit/test_simulation.py::TestRunOneComboV2 -v`
+Expected: All 8 PASS
 
 **Step 5: Commit**
 
@@ -639,7 +695,7 @@ class TestRunPowerAnalysisV2:
         assert (results["condition"] == "VISIT_70b").all()
 
     def test_null_calibration(self):
-        """Under H0 (sigma_pert=0, sigma>0), detection rate is below 0.20."""
+        """Under H0 (sigma_pert=0, sigma>0), detection rate is below 0.15."""
         from simulation import run_power_analysis_v2
         z_i, y_orig = self._make_z_and_y(n=100)
         results = run_power_analysis_v2(
@@ -649,7 +705,7 @@ class TestRunPowerAnalysisV2:
         )
         for metric in ["mi", "phi", "flip_rate", "jsd", "kl"]:
             rate = results[results["metric"] == metric]["detection_rate"].values[0]
-            assert rate < 0.20, f"{metric} null rate {rate} too high"
+            assert rate < 0.15, f"{metric} null rate {rate} too high (expected ~0.05)"
 
     def test_checkpoint_and_resume(self, tmp_path):
         """Checkpointing works: partial run + resume produces same result as full run."""
@@ -679,15 +735,17 @@ class TestRunPowerAnalysisV2:
         )
 
         assert len(resumed) == len(full)
-        # Checkpoint rows should be unchanged
-        for _, row in partial_rows.iterrows():
+        # ALL rows should match the full run (checkpoint preserved + new combos identical)
+        for _, frow in full.iterrows():
             match = resumed[
-                (resumed["metric"] == row["metric"]) &
-                (resumed["sigma_pert"] == row["sigma_pert"]) &
-                (resumed["sigma"] == row["sigma"])
+                (resumed["metric"] == frow["metric"]) &
+                (resumed["sigma_pert"] == frow["sigma_pert"]) &
+                (resumed["sigma"] == frow["sigma"])
             ]
             assert len(match) == 1
-            assert match["detection_rate"].values[0] == row["detection_rate"]
+            assert match["detection_rate"].values[0] == frow["detection_rate"], (
+                f"Mismatch for {frow['metric']} sp={frow['sigma_pert']} s={frow['sigma']}"
+            )
 ```
 
 **Step 2: Run tests to verify they fail**
@@ -779,7 +837,7 @@ def run_power_analysis_v2(
 **Step 4: Run tests to verify they pass**
 
 Run: `cd /scratch/yang.zih/cot_faithfulness/MedPerturb && conda run -n cot pytest tests/unit/test_simulation.py::TestRunPowerAnalysisV2 -v`
-Expected: All 8 PASS
+Expected: All 7 PASS
 
 **Step 5: Commit**
 
@@ -958,7 +1016,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     n_steps = int(round(args.sigma_pert_max / args.sigma_pert_step)) + 1
-    sigma_pert_values = [i * args.sigma_pert_step for i in range(n_steps)]
+    sigma_pert_values = [round(i * args.sigma_pert_step, 6) for i in range(n_steps)]
 
     print("Running power analysis v2 (empirically grounded):", flush=True)
     print(f"  sigma_pert: 0 to {args.sigma_pert_max} (step {args.sigma_pert_step},"
@@ -1104,7 +1162,7 @@ Test classes to remove from `tests/unit/test_simulation.py`:
 - `TestGenerateResponses`
 - `TestRunPowerAnalysis` (v1 version)
 
-Keep: `TestRunSingleSimulation` (still used by v2)
+Keep but update: `TestRunSingleSimulation` — update the setup code to use v2 function signature (create z_i/y_orig arrays instead of passing beta params)
 
 **Step 2: Remove v1 code and tests**
 
@@ -1112,14 +1170,33 @@ Remove the identified functions and test classes.
 
 **Step 3: Rename v2 functions (drop the `_v2` suffix)**
 
-Rename in `code/simulation.py`:
+Rename in `code/simulation.py` (use find-and-replace):
 - `generate_responses_v2` → `generate_responses`
 - `_combo_seed_v2` → `_combo_seed`
 - `_run_one_combo_v2` → `_run_one_combo`
 - `run_power_analysis_v2` → `run_power_analysis`
 - `generate_power_curves_v2` → `generate_power_curves`
 
-Update all references in `main()`, test files, and internal calls.
+Update all references in `main()` and internal calls (`_run_one_combo` calls `generate_responses`, `run_power_analysis` calls `_run_one_combo`, etc.).
+
+Rename in `tests/unit/test_simulation.py`:
+- All imports: `from simulation import generate_responses_v2` → `from simulation import generate_responses`
+- All imports: `from simulation import _combo_seed_v2` → `from simulation import _combo_seed`
+- All imports: `from simulation import _run_one_combo_v2` → `from simulation import _run_one_combo`
+- All imports: `from simulation import run_power_analysis_v2` → `from simulation import run_power_analysis`
+- All imports: `from simulation import generate_power_curves_v2` → `from simulation import generate_power_curves`
+- Class names: `TestGenerateResponsesV2` → `TestGenerateResponses`, `TestComboSeedV2` → `TestComboSeed`, `TestRunOneComboV2` → `TestRunOneCombo`, `TestRunPowerAnalysisV2` → `TestRunPowerAnalysis`, `TestGeneratePowerCurvesV2` → `TestGeneratePowerCurves`
+
+Update `TestRunSingleSimulation` to use the renamed `generate_responses` (v2 signature):
+```python
+# Before (v1 signature — will break after rename):
+data = generate_responses(100, 0.0, 2.0, 1.0, rng)
+
+# After (v2 signature):
+z_i = rng.normal(0, 2, size=100)
+y_orig = (z_i > 0).astype(int)
+data = generate_responses(z_i, y_orig, 0.5, 0.3, rng)
+```
 
 **Step 4: Run all tests**
 

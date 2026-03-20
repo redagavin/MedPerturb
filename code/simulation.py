@@ -261,6 +261,80 @@ def _run_one_combo_v2(args):
     return results
 
 
+def run_power_analysis_v2(
+    z_i: np.ndarray,
+    y_orig: np.ndarray,
+    condition: str,
+    sigma_pert_values: list[float],
+    sigma_values: list[float],
+    n_simulations: int = 1000,
+    n_bootstrap: int = 1000,
+    seed: int = 42,
+    n_workers: int = 1,
+    checkpoint_path: str = None,
+) -> pd.DataFrame:
+    """Run Monte Carlo simulation across (sigma_pert, sigma) grid for one condition.
+
+    Uses real logits z_i and binary answers y_orig. Parallelizes across
+    parameter combos using n_workers processes. Checkpoints to CSV.
+
+    Returns DataFrame with columns: metric, sigma_pert, sigma, condition,
+    detection_rate, mean_p_value.
+    """
+    import multiprocessing
+
+    completed = set()
+    all_results = []
+    if checkpoint_path and os.path.exists(checkpoint_path):
+        existing = pd.read_csv(checkpoint_path)
+        all_results = existing.to_dict('records')
+        for _, row in existing.iterrows():
+            completed.add((row['sigma_pert'], row['sigma'], row['metric']))
+        n_done = len(completed) // len(ALL_METRICS)
+        print(f"  Resuming from checkpoint: {n_done} combos already done", flush=True)
+
+    work_items = []
+    for sigma_pert in sigma_pert_values:
+        for sigma in sigma_values:
+            if (sigma_pert, sigma, ALL_METRICS[0]) in completed:
+                continue
+            work_items.append((
+                sigma_pert, sigma, condition,
+                n_simulations, n_bootstrap, seed, z_i, y_orig,
+            ))
+
+    total = len(work_items)
+    print(f"  {total} combos remaining, using {n_workers} workers", flush=True)
+
+    if total == 0:
+        return pd.DataFrame(all_results)
+
+    done = 0
+    if n_workers <= 1:
+        for item in work_items:
+            combo_results = _run_one_combo_v2(item)
+            all_results.extend(combo_results)
+            done += 1
+            if done % 10 == 0 or done == total:
+                print(f"  Progress: {done}/{total} ({done/total*100:.0f}%)", flush=True)
+                if checkpoint_path:
+                    pd.DataFrame(all_results).to_csv(checkpoint_path, index=False)
+    else:
+        with multiprocessing.Pool(n_workers) as pool:
+            for combo_results in pool.imap_unordered(_run_one_combo_v2, work_items):
+                all_results.extend(combo_results)
+                done += 1
+                if done % 10 == 0 or done == total:
+                    print(f"  Progress: {done}/{total} ({done/total*100:.0f}%)", flush=True)
+                    if checkpoint_path:
+                        pd.DataFrame(all_results).to_csv(checkpoint_path, index=False)
+
+    if checkpoint_path:
+        pd.DataFrame(all_results).to_csv(checkpoint_path, index=False)
+
+    return pd.DataFrame(all_results)
+
+
 def run_power_analysis(
     beta1_values: list[float],
     beta_gender_values: list[float],

@@ -419,3 +419,112 @@ class TestRunOneComboV2:
         for a, b in zip(r1, r2):
             assert a["detection_rate"] == b["detection_rate"]
             assert a["mean_p_value"] == b["mean_p_value"]
+
+
+class TestRunPowerAnalysisV2:
+    """Tests for the v2 power analysis loop with real logits."""
+
+    def _make_z_and_y(self, n=50, seed=42):
+        rng = np.random.default_rng(seed)
+        z_i = rng.normal(0, 1.5, size=n)
+        y_orig = (z_i > 0).astype(int)
+        return z_i, y_orig
+
+    def test_output_columns(self):
+        from simulation import run_power_analysis_v2
+        z_i, y_orig = self._make_z_and_y()
+        results = run_power_analysis_v2(
+            z_i=z_i, y_orig=y_orig, condition="MANAGE_8b",
+            sigma_pert_values=[0.0, 0.5], sigma_values=[0.3],
+            n_simulations=5, n_bootstrap=50, seed=42,
+        )
+        required = {"metric", "sigma_pert", "sigma", "condition", "detection_rate", "mean_p_value"}
+        assert required == set(results.columns)
+
+    def test_output_row_count(self):
+        from simulation import run_power_analysis_v2
+        z_i, y_orig = self._make_z_and_y()
+        results = run_power_analysis_v2(
+            z_i=z_i, y_orig=y_orig, condition="MANAGE_8b",
+            sigma_pert_values=[0.0, 0.5, 1.0], sigma_values=[0.25, 0.5],
+            n_simulations=5, n_bootstrap=50, seed=42,
+        )
+        assert len(results) == 30  # 5 metrics x 3 sigma_pert x 2 sigma
+
+    def test_all_five_metrics(self):
+        from simulation import run_power_analysis_v2
+        z_i, y_orig = self._make_z_and_y()
+        results = run_power_analysis_v2(
+            z_i=z_i, y_orig=y_orig, condition="MANAGE_8b",
+            sigma_pert_values=[0.0], sigma_values=[0.3],
+            n_simulations=5, n_bootstrap=50, seed=42,
+        )
+        assert set(results["metric"].unique()) == {"mi", "phi", "flip_rate", "jsd", "kl"}
+
+    def test_detection_rate_between_0_and_1(self):
+        from simulation import run_power_analysis_v2
+        z_i, y_orig = self._make_z_and_y()
+        results = run_power_analysis_v2(
+            z_i=z_i, y_orig=y_orig, condition="MANAGE_8b",
+            sigma_pert_values=[0.0, 1.0], sigma_values=[0.3],
+            n_simulations=10, n_bootstrap=50, seed=42,
+        )
+        assert (results["detection_rate"] >= 0).all()
+        assert (results["detection_rate"] <= 1).all()
+
+    def test_condition_column_populated(self):
+        from simulation import run_power_analysis_v2
+        z_i, y_orig = self._make_z_and_y()
+        results = run_power_analysis_v2(
+            z_i=z_i, y_orig=y_orig, condition="VISIT_70b",
+            sigma_pert_values=[0.0], sigma_values=[0.3],
+            n_simulations=5, n_bootstrap=50, seed=42,
+        )
+        assert (results["condition"] == "VISIT_70b").all()
+
+    def test_null_calibration(self):
+        from simulation import run_power_analysis_v2
+        z_i, y_orig = self._make_z_and_y(n=100)
+        results = run_power_analysis_v2(
+            z_i=z_i, y_orig=y_orig, condition="MANAGE_8b",
+            sigma_pert_values=[0.0], sigma_values=[0.5],
+            n_simulations=200, n_bootstrap=200, seed=42,
+        )
+        for metric in ["mi", "phi", "flip_rate", "jsd", "kl"]:
+            rate = results[results["metric"] == metric]["detection_rate"].values[0]
+            assert rate < 0.15, f"{metric} null rate {rate} too high (expected ~0.05)"
+
+    def test_checkpoint_and_resume(self, tmp_path):
+        from simulation import run_power_analysis_v2
+        z_i, y_orig = self._make_z_and_y()
+        checkpoint = str(tmp_path / "ckpt.csv")
+
+        full = run_power_analysis_v2(
+            z_i=z_i, y_orig=y_orig, condition="MANAGE_8b",
+            sigma_pert_values=[0.0, 0.5, 1.0], sigma_values=[0.3],
+            n_simulations=5, n_bootstrap=50, seed=42,
+        )
+
+        partial_rows = full[
+            (full["sigma_pert"] == 0.0) & (full["sigma"] == 0.3)
+        ].copy()
+        partial_rows.to_csv(checkpoint, index=False)
+
+        resumed = run_power_analysis_v2(
+            z_i=z_i, y_orig=y_orig, condition="MANAGE_8b",
+            sigma_pert_values=[0.0, 0.5, 1.0], sigma_values=[0.3],
+            n_simulations=5, n_bootstrap=50, seed=42,
+            checkpoint_path=checkpoint,
+        )
+
+        assert len(resumed) == len(full)
+        for _, frow in full.iterrows():
+            match = resumed[
+                (resumed["metric"] == frow["metric"]) &
+                (resumed["sigma_pert"] == frow["sigma_pert"]) &
+                (resumed["sigma"] == frow["sigma"])
+            ]
+            assert len(match) == 1
+            assert match["detection_rate"].values[0] == frow["detection_rate"], (
+                f"Mismatch for {frow['metric']} sp={frow['sigma_pert']} s={frow['sigma']}"
+            )

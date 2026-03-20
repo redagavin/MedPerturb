@@ -1,5 +1,5 @@
 # ABOUTME: Monte Carlo power simulation for all 5 MedPerturb metrics.
-# ABOUTME: Estimates false positive rate and statistical power via the logistic generative model.
+# ABOUTME: v2: uses real experiment logits instead of synthetic DGP.
 
 import os
 
@@ -495,79 +495,76 @@ def generate_power_curves_v2(results: pd.DataFrame, output_dir: str, condition: 
     plt.close(fig)
 
 
+CONDITIONS = [
+    ("MANAGE", "8b", "results/main_evaluation_llama_3.1_8b_instruct.json"),
+    ("VISIT", "8b", "results/main_evaluation_llama_3.1_8b_instruct.json"),
+    ("RESOURCE", "8b", "results/main_evaluation_llama_3.1_8b_instruct.json"),
+    ("MANAGE", "70b", "results/main_evaluation_llama_3.1_70b_instruct.json"),
+    ("VISIT", "70b", "results/main_evaluation_llama_3.1_70b_instruct.json"),
+    ("RESOURCE", "70b", "results/main_evaluation_llama_3.1_70b_instruct.json"),
+]
+
+
 def main():
     import argparse
+    from load_experiment_logits import load_condition
 
     parser = argparse.ArgumentParser(
-        description="Monte Carlo power simulation for all 5 MedPerturb metrics"
+        description="Monte Carlo power simulation v2 — empirically grounded"
     )
-    parser.add_argument('--beta1-values', type=float, nargs='+',
-                        default=[1.0, 2.0, 3.0],
-                        help='Model accuracy coefficients')
-    parser.add_argument('--beta-gender-max', type=float, default=4.0,
-                        help='Maximum beta_gender to sweep')
-    parser.add_argument('--beta-gender-step', type=float, default=0.1,
-                        help='Step size for beta_gender sweep')
-    parser.add_argument('--n-simulations', type=int, default=1000,
-                        help='Number of simulation runs per parameter combo')
-    parser.add_argument('--n-cases', type=int, default=100,
-                        help='Number of cases per simulated experiment')
-    parser.add_argument('--n-bootstrap', type=int, default=1000,
-                        help='Bootstrap iterations per test')
-    parser.add_argument('--seed', type=int, default=42,
-                        help='Random seed')
+    parser.add_argument('--sigma-pert-max', type=float, default=3.0,
+                        help='Maximum sigma_pert to sweep')
+    parser.add_argument('--sigma-pert-step', type=float, default=0.1,
+                        help='Step size for sigma_pert sweep')
     parser.add_argument('--sigma-values', type=float, nargs='+',
-                        default=[0.0],
-                        help='Baseline noise levels (sigma)')
-    parser.add_argument('--sigma-pert', type=float, default=None,
-                        help='Perturbation arm noise level (defaults to sigma)')
-    parser.add_argument('--n-workers', type=int, default=1,
-                        help='Number of parallel workers')
-    parser.add_argument('--output-dir', type=str,
-                        default='results/simulation',
-                        help='Output directory')
+                        default=[0.0, 0.25, 0.5, 1.0],
+                        help='Baseline noise levels')
+    parser.add_argument('--n-simulations', type=int, default=1000)
+    parser.add_argument('--n-bootstrap', type=int, default=1000)
+    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--n-workers', type=int, default=1)
+    parser.add_argument('--output-dir', type=str, default='results/simulation_v2')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    beta_gender_values = list(np.arange(0, args.beta_gender_max + 1e-9,
-                                        args.beta_gender_step))
+    n_steps = int(round(args.sigma_pert_max / args.sigma_pert_step)) + 1
+    sigma_pert_values = [round(i * args.sigma_pert_step, 6) for i in range(n_steps)]
 
-    total_combos = (len(args.beta1_values) * len(beta_gender_values)
-                    * len(args.sigma_values))
-    print(f"Running power analysis:", flush=True)
-    print(f"  beta1 values: {args.beta1_values}", flush=True)
-    print(f"  sigma values: {args.sigma_values}", flush=True)
-    print(f"  beta_gender range: 0 to {args.beta_gender_max} "
-          f"(step {args.beta_gender_step})", flush=True)
-    print(f"  {args.n_simulations} simulations per combination", flush=True)
-    print(f"  {args.n_cases} cases, {args.n_bootstrap} bootstrap iterations",
-          flush=True)
-    print(f"  Total parameter combos: {total_combos}", flush=True)
+    print("Running power analysis v2 (empirically grounded):", flush=True)
+    print(f"  sigma_pert: 0 to {args.sigma_pert_max} (step {args.sigma_pert_step},"
+          f" {len(sigma_pert_values)} values)", flush=True)
+    print(f"  sigma: {args.sigma_values}", flush=True)
+    print(f"  {args.n_simulations} simulations, {args.n_bootstrap} bootstrap", flush=True)
     print(f"  Workers: {args.n_workers}", flush=True)
-    print(f"  Metrics: {ALL_METRICS}", flush=True)
+    print(f"  Conditions: {len(CONDITIONS)}", flush=True)
 
-    checkpoint_path = os.path.join(args.output_dir, 'simulation_results.csv')
+    for question, model_short, json_path in CONDITIONS:
+        condition = f"{question}_{model_short}"
+        print(f"\n{'='*50}", flush=True)
+        print(f"Condition: {condition}", flush=True)
+        print(f"{'='*50}", flush=True)
 
-    results = run_power_analysis(
-        beta1_values=args.beta1_values,
-        beta_gender_values=beta_gender_values,
-        sigma_values=args.sigma_values,
-        sigma_pert=args.sigma_pert,
-        n_simulations=args.n_simulations,
-        n_cases=args.n_cases,
-        n_bootstrap=args.n_bootstrap,
-        seed=args.seed,
-        n_workers=args.n_workers,
-        checkpoint_path=checkpoint_path,
-    )
+        data = load_condition(json_path, question)
+        print(f"  Loaded {len(data['z_i'])} cases, "
+              f"z_i range: [{data['z_i'].min():.1f}, {data['z_i'].max():.1f}]", flush=True)
 
-    results_path = os.path.join(args.output_dir, 'simulation_results.csv')
-    results.to_csv(results_path, index=False)
-    print(f"Results saved to: {results_path}", flush=True)
+        checkpoint = os.path.join(args.output_dir, f'simulation_v2_{condition}.csv')
+        results = run_power_analysis_v2(
+            z_i=data["z_i"], y_orig=data["y_orig"], condition=condition,
+            sigma_pert_values=sigma_pert_values, sigma_values=args.sigma_values,
+            n_simulations=args.n_simulations, n_bootstrap=args.n_bootstrap,
+            seed=args.seed, n_workers=args.n_workers,
+            checkpoint_path=checkpoint,
+        )
 
-    generate_power_curves(results, args.output_dir)
-    print(f"Power curves saved to: {args.output_dir}")
+        results.to_csv(checkpoint, index=False)
+        print(f"  Results saved to: {checkpoint}", flush=True)
+
+        generate_power_curves_v2(results, args.output_dir, condition)
+        print(f"  Power curves saved", flush=True)
+
+    print(f"\nAll conditions complete.", flush=True)
 
 
 if __name__ == '__main__':

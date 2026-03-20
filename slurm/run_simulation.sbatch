@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=simulation
+#SBATCH --job-name=simulation_v2
 #SBATCH --partition=177huntington
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=32G
@@ -8,11 +8,11 @@
 #SBATCH --error=logs/simulation_%j.err
 #SBATCH --signal=INT@300
 
-# ABOUTME: SLURM script for Monte Carlo power simulation of all 5 metrics
-# ABOUTME: CPU-only job, estimates false positive rate and power
+# ABOUTME: SLURM script for Monte Carlo power simulation v2 (empirically grounded)
+# ABOUTME: CPU-only job, iterates over 6 (question, model) conditions
 
 echo "========================================"
-echo "MI Power Simulation (Monte Carlo)"
+echo "Power Simulation v2 (Empirically Grounded)"
 echo "========================================"
 echo "Job ID: ${SLURM_JOB_ID}"
 echo "Start time: $(date)"
@@ -25,19 +25,17 @@ conda activate cot
 MEDPERTURB_DIR="/scratch/yang.zih/cot_faithfulness/MedPerturb"
 cd "${MEDPERTURB_DIR}"
 
-mkdir -p results/simulation
+mkdir -p results/simulation_v2
 
 python -u code/simulation.py \
     --n-simulations 1000 \
     --n-bootstrap 1000 \
-    --beta1-values 1.0 2.0 3.0 \
-    --beta-gender-max 4.0 \
-    --beta-gender-step 0.1 \
-    --sigma-values 0.0 0.1 0.3 0.5 \
-    --n-cases 100 \
+    --sigma-pert-max 3.0 \
+    --sigma-pert-step 0.1 \
+    --sigma-values 0.0 0.25 0.5 1.0 \
     --seed 42 \
     --n-workers 32 \
-    --output-dir results/simulation
+    --output-dir results/simulation_v2
 
 EXIT_CODE=$?
 

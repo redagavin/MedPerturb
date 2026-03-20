@@ -189,7 +189,9 @@ def run_power_analysis(
                 completed.add((row['sigma_pert'], row['sigma'], row['metric']))
             n_done = len(completed) // len(ALL_METRICS)
             print(f"  Resuming from checkpoint: {n_done} combos already done", flush=True)
-        except (pd.errors.EmptyDataError, KeyError):
+        except (pd.errors.EmptyDataError, KeyError, UnicodeDecodeError):
+            completed = set()
+            all_results = []
             print("  Warning: checkpoint file corrupted or empty, starting fresh", flush=True)
 
     work_items = []

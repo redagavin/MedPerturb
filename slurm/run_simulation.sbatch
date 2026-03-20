@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=simulation
-#SBATCH --partition=short
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=8G
+#SBATCH --partition=177huntington
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=32G
 #SBATCH --time=48:00:00
 #SBATCH --output=logs/simulation_%j.out
 #SBATCH --error=logs/simulation_%j.err
@@ -27,7 +27,7 @@ cd "${MEDPERTURB_DIR}"
 
 mkdir -p results/simulation
 
-python code/simulation.py \
+python -u code/simulation.py \
     --n-simulations 1000 \
     --n-bootstrap 1000 \
     --beta1-values 1.0 2.0 3.0 \
@@ -36,6 +36,7 @@ python code/simulation.py \
     --sigma-values 0.0 0.1 0.3 0.5 \
     --n-cases 100 \
     --seed 42 \
+    --n-workers 32 \
     --output-dir results/simulation
 
 EXIT_CODE=$?

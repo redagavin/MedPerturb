@@ -198,7 +198,7 @@ One CSV per condition. Columns: `metric, sigma_pert, sigma, condition, detection
 
 ### Deterministic seeding
 
-Same as v1: SHA256-based per-combo seed. Hash key format: `"{global_seed}:{sigma_pert:.1f}:{sigma:.2f}:{condition}"` using formatted float strings to avoid floating-point representation mismatches between generation and checkpoint resumption (e.g., `"42:0.5:0.25:MANAGE_8b"`). Independent of execution order.
+Same as v1: SHA256-based per-combo seed. Hash key format: `"{global_seed}:{sigma_pert:.6f}:{sigma:.6f}:{condition}"` using formatted float strings to avoid floating-point representation mismatches between generation and checkpoint resumption (e.g., `"42:0.500000:0.250000:MANAGE_8b"`). Precision matches `round(..., 6)` in the sweep value generation, ensuring correct seeding for any step size. Independent of execution order.
 
 ### SLURM
 

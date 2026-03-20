@@ -113,11 +113,11 @@ def run_single_simulation(
 def _combo_seed(global_seed, sigma_pert, sigma, condition):
     """Derive a deterministic seed from parameters.
 
-    Uses formatted float strings (:.1f for sigma_pert, :.2f for sigma) to ensure
-    floating-point representation artifacts don't produce different seeds.
+    Uses formatted float strings (:.6f) to ensure floating-point representation
+    artifacts don't produce different seeds. Precision matches round(..., 6) in main().
     """
     import hashlib
-    key = f"{global_seed}:{sigma_pert:.1f}:{sigma:.2f}:{condition}"
+    key = f"{global_seed}:{sigma_pert:.6f}:{sigma:.6f}:{condition}"
     return int(hashlib.sha256(key.encode()).hexdigest(), 16) % (2**31)
 
 
@@ -182,12 +182,15 @@ def run_power_analysis(
     completed = set()
     all_results = []
     if checkpoint_path and os.path.exists(checkpoint_path):
-        existing = pd.read_csv(checkpoint_path)
-        all_results = existing.to_dict('records')
-        for _, row in existing.iterrows():
-            completed.add((row['sigma_pert'], row['sigma'], row['metric']))
-        n_done = len(completed) // len(ALL_METRICS)
-        print(f"  Resuming from checkpoint: {n_done} combos already done", flush=True)
+        try:
+            existing = pd.read_csv(checkpoint_path)
+            all_results = existing.to_dict('records')
+            for _, row in existing.iterrows():
+                completed.add((row['sigma_pert'], row['sigma'], row['metric']))
+            n_done = len(completed) // len(ALL_METRICS)
+            print(f"  Resuming from checkpoint: {n_done} combos already done", flush=True)
+        except (pd.errors.EmptyDataError, KeyError):
+            print("  Warning: checkpoint file corrupted or empty, starting fresh", flush=True)
 
     work_items = []
     for sigma_pert in sigma_pert_values:

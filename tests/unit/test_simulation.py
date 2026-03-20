@@ -238,3 +238,109 @@ class TestRunPowerAnalysis:
         # 5 metrics x 1 beta1 x 2 sigma x 2 beta_gender = 20 rows
         assert len(results) == 20
         assert "sigma" in results.columns
+
+
+class TestGenerateResponsesV2:
+    """Tests for generate_responses_v2 using real logits."""
+
+    def _make_z_and_y(self, n=100, seed=42):
+        """Create realistic z_i and y_orig arrays."""
+        rng = np.random.default_rng(seed)
+        z_i = rng.normal(0, 2, size=n)
+        y_orig = (z_i > 0).astype(int)
+        return z_i, y_orig
+
+    def test_returns_required_keys(self):
+        from simulation import generate_responses_v2
+        z_i, y_orig = self._make_z_and_y()
+        rng = np.random.default_rng(42)
+        result = generate_responses_v2(z_i, y_orig, sigma_pert=0.5, sigma=0.3, rng=rng)
+        assert set(result.keys()) == {"orig", "pert", "base", "p_orig", "p_pert", "p_base"}
+
+    def test_lengths_match_input(self):
+        from simulation import generate_responses_v2
+        z_i, y_orig = self._make_z_and_y(n=50)
+        rng = np.random.default_rng(42)
+        result = generate_responses_v2(z_i, y_orig, sigma_pert=0.5, sigma=0.3, rng=rng)
+        for key in result:
+            assert len(result[key]) == 50
+
+    def test_p_orig_is_sigmoid_of_z(self):
+        from simulation import generate_responses_v2
+        from scipy.special import expit as sigmoid
+        z_i = np.array([0.0, 1.0, -1.0, 3.0])
+        y_orig = np.array([0, 1, 0, 1])
+        rng = np.random.default_rng(42)
+        result = generate_responses_v2(z_i, y_orig, sigma_pert=0.5, sigma=0.3, rng=rng)
+        np.testing.assert_array_almost_equal(result["p_orig"], sigmoid(z_i))
+
+    def test_orig_is_y_orig_not_resampled(self):
+        from simulation import generate_responses_v2
+        z_i = np.array([0.0, 1.0, -1.0, 3.0])
+        y_orig = np.array([0, 1, 0, 1])
+        rng = np.random.default_rng(42)
+        result = generate_responses_v2(z_i, y_orig, sigma_pert=0.5, sigma=0.3, rng=rng)
+        np.testing.assert_array_equal(result["orig"], y_orig)
+
+    def test_prob_vectors_in_0_1(self):
+        from simulation import generate_responses_v2
+        z_i, y_orig = self._make_z_and_y()
+        rng = np.random.default_rng(42)
+        result = generate_responses_v2(z_i, y_orig, sigma_pert=1.0, sigma=0.5, rng=rng)
+        for key in ["p_orig", "p_pert", "p_base"]:
+            assert np.all(result[key] > 0.0)
+            assert np.all(result[key] < 1.0)
+
+    def test_binary_vectors_are_binary(self):
+        from simulation import generate_responses_v2
+        z_i, y_orig = self._make_z_and_y()
+        rng = np.random.default_rng(42)
+        result = generate_responses_v2(z_i, y_orig, sigma_pert=0.5, sigma=0.3, rng=rng)
+        for key in ["pert", "base"]:
+            assert set(np.unique(result[key])).issubset({0, 1})
+
+    def test_null_hypothesis_symmetric(self):
+        from simulation import generate_responses_v2
+        z_i, y_orig = self._make_z_and_y(n=10000)
+        rng = np.random.default_rng(42)
+        result = generate_responses_v2(z_i, y_orig, sigma_pert=0.0, sigma=0.5, rng=rng)
+        pert_diff = np.mean(np.abs(result["p_pert"] - result["p_orig"]))
+        base_diff = np.mean(np.abs(result["p_base"] - result["p_orig"]))
+        assert abs(pert_diff - base_diff) < 0.03
+
+    def test_sigma_pert_adds_extra_noise_to_pert_arm(self):
+        from simulation import generate_responses_v2
+        z_i, y_orig = self._make_z_and_y(n=10000)
+        rng = np.random.default_rng(42)
+        result = generate_responses_v2(z_i, y_orig, sigma_pert=1.0, sigma=0.3, rng=rng)
+        pert_diff = np.mean(np.abs(result["p_pert"] - result["p_orig"]))
+        base_diff = np.mean(np.abs(result["p_base"] - result["p_orig"]))
+        assert pert_diff > base_diff + 0.01
+
+    def test_zero_noise_preserves_original(self):
+        from simulation import generate_responses_v2
+        z_i = np.array([0.0, 1.0, -1.0, 3.0])
+        y_orig = np.array([0, 1, 0, 1])
+        rng = np.random.default_rng(42)
+        result = generate_responses_v2(z_i, y_orig, sigma_pert=0.0, sigma=0.0, rng=rng)
+        np.testing.assert_array_almost_equal(result["p_pert"], result["p_orig"])
+        np.testing.assert_array_almost_equal(result["p_base"], result["p_orig"])
+
+    def test_deterministic_with_same_seed(self):
+        from simulation import generate_responses_v2
+        z_i, y_orig = self._make_z_and_y()
+        r1 = generate_responses_v2(z_i, y_orig, 0.5, 0.3, np.random.default_rng(42))
+        r2 = generate_responses_v2(z_i, y_orig, 0.5, 0.3, np.random.default_rng(42))
+        for key in r1:
+            np.testing.assert_array_equal(r1[key], r2[key])
+
+    def test_extreme_z_values(self):
+        from simulation import generate_responses_v2
+        z_i = np.array([13.8, -13.8, 0.0, 13.8, -13.8])
+        y_orig = np.array([1, 0, 0, 1, 0])
+        rng = np.random.default_rng(42)
+        result = generate_responses_v2(z_i, y_orig, sigma_pert=1.0, sigma=0.5, rng=rng)
+        for key in ["p_orig", "p_pert", "p_base"]:
+            assert np.all(np.isfinite(result[key]))
+            assert np.all(result[key] >= 0.0)
+            assert np.all(result[key] <= 1.0)

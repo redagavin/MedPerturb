@@ -72,6 +72,54 @@ def generate_responses(
     }
 
 
+def generate_responses_v2(
+    z_i: np.ndarray,
+    y_orig: np.ndarray,
+    sigma_pert: float,
+    sigma: float,
+    rng: np.random.Generator,
+) -> dict:
+    """Generate simulated responses from real logits.
+
+    For each case i with real logit z_i:
+        epsilon_pert_i  ~ N(0, sigma_pert^2)
+        epsilon_noise_i ~ N(0, sigma^2)       (perturbation arm)
+        epsilon_noise_i'~ N(0, sigma^2)       (baseline arm, independent)
+
+        logit_pert_i = z_i + epsilon_pert_i + epsilon_noise_i
+        logit_base_i = z_i + epsilon_noise_i'
+
+        p_pert = sigmoid(logit_pert), p_base = sigmoid(logit_base)
+        y_pert ~ Bernoulli(p_pert), y_base ~ Bernoulli(p_base)
+
+    Returns dict with binary vectors and probability vectors.
+    """
+    n = len(z_i)
+
+    epsilon_pert = rng.normal(0, sigma_pert, size=n) if sigma_pert > 0 else 0.0
+    epsilon_noise_pert = rng.normal(0, sigma, size=n) if sigma > 0 else 0.0
+    epsilon_noise_base = rng.normal(0, sigma, size=n) if sigma > 0 else 0.0
+
+    logit_pert = z_i + epsilon_pert + epsilon_noise_pert
+    logit_base = z_i + epsilon_noise_base
+
+    p_orig = sigmoid(z_i)
+    p_pert = sigmoid(logit_pert)
+    p_base = sigmoid(logit_base)
+
+    pert_bin = rng.binomial(1, p_pert)
+    base_bin = rng.binomial(1, p_base)
+
+    return {
+        "orig": y_orig.copy(),
+        "pert": pert_bin,
+        "base": base_bin,
+        "p_orig": p_orig,
+        "p_pert": p_pert,
+        "p_base": p_base,
+    }
+
+
 def run_single_simulation(
     data: dict,
     n_bootstrap: int = 1000,

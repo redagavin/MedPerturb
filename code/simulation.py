@@ -214,6 +214,53 @@ def _run_one_combo(args):
     return results
 
 
+def _combo_seed_v2(global_seed, sigma_pert, sigma, condition):
+    """Derive a deterministic seed from v2 parameters.
+
+    Uses formatted float strings (:.1f for sigma_pert, :.2f for sigma) to ensure
+    floating-point representation artifacts don't produce different seeds.
+    """
+    import hashlib
+    key = f"{global_seed}:{sigma_pert:.1f}:{sigma:.2f}:{condition}"
+    return int(hashlib.sha256(key.encode()).hexdigest(), 16) % (2**31)
+
+
+def _run_one_combo_v2(args):
+    """Run all simulations for one (sigma_pert, sigma) combo using real logits.
+
+    Designed as a top-level function for multiprocessing.Pool.
+    """
+    sigma_pert, sigma, condition, n_simulations, n_bootstrap, global_seed, z_i, y_orig = args
+
+    combo_seed = _combo_seed_v2(global_seed, sigma_pert, sigma, condition)
+    base_rng = np.random.default_rng(combo_seed)
+
+    p_values_by_metric = {m: [] for m in ALL_METRICS}
+
+    for _ in range(n_simulations):
+        sim_seed = base_rng.integers(0, 2**31)
+        sim_rng = np.random.default_rng(sim_seed)
+
+        data = generate_responses_v2(z_i, y_orig, sigma_pert, sigma, sim_rng)
+        boot_rng = np.random.default_rng(sim_rng.integers(0, 2**31))
+        pvals = run_single_simulation(data, n_bootstrap=n_bootstrap, rng=boot_rng)
+        for m in ALL_METRICS:
+            p_values_by_metric[m].append(pvals[m])
+
+    results = []
+    for m in ALL_METRICS:
+        pv = np.array(p_values_by_metric[m])
+        results.append({
+            "metric": m,
+            "sigma_pert": sigma_pert,
+            "sigma": sigma,
+            "condition": condition,
+            "detection_rate": float(np.mean(pv < 0.05)),
+            "mean_p_value": float(np.mean(pv)),
+        })
+    return results
+
+
 def run_power_analysis(
     beta1_values: list[float],
     beta_gender_values: list[float],

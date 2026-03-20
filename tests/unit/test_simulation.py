@@ -344,3 +344,78 @@ class TestGenerateResponsesV2:
             assert np.all(np.isfinite(result[key]))
             assert np.all(result[key] >= 0.0)
             assert np.all(result[key] <= 1.0)
+
+
+class TestComboSeedV2:
+    """Tests for deterministic per-combo seeding with formatted floats."""
+
+    def test_same_params_same_seed(self):
+        from simulation import _combo_seed_v2
+        s1 = _combo_seed_v2(42, 0.5, 0.25, "MANAGE_8b")
+        s2 = _combo_seed_v2(42, 0.5, 0.25, "MANAGE_8b")
+        assert s1 == s2
+
+    def test_different_params_different_seed(self):
+        from simulation import _combo_seed_v2
+        s1 = _combo_seed_v2(42, 0.5, 0.25, "MANAGE_8b")
+        s2 = _combo_seed_v2(42, 0.6, 0.25, "MANAGE_8b")
+        assert s1 != s2
+
+    def test_different_conditions_different_seed(self):
+        from simulation import _combo_seed_v2
+        s1 = _combo_seed_v2(42, 0.5, 0.25, "MANAGE_8b")
+        s2 = _combo_seed_v2(42, 0.5, 0.25, "VISIT_8b")
+        assert s1 != s2
+
+    def test_float_formatting_canonical(self):
+        from simulation import _combo_seed_v2
+        s1 = _combo_seed_v2(42, 0.3, 0.25, "MANAGE_8b")
+        s2 = _combo_seed_v2(42, 0.30000000000000004, 0.25, "MANAGE_8b")
+        assert s1 == s2
+
+    def test_seed_in_valid_range(self):
+        from simulation import _combo_seed_v2
+        s = _combo_seed_v2(42, 0.5, 0.25, "MANAGE_8b")
+        assert isinstance(s, int)
+        assert 0 <= s < 2**31
+
+
+class TestRunOneComboV2:
+    """Tests for _run_one_combo_v2 producing correct results structure."""
+
+    def test_returns_list_of_5_metric_dicts(self):
+        from simulation import _run_one_combo_v2
+        rng = np.random.default_rng(42)
+        z_i = rng.normal(0, 1.5, size=50)
+        y_orig = (z_i > 0).astype(int)
+        args = (0.5, 0.3, "MANAGE_8b", 5, 50, 42, z_i, y_orig)
+        results = _run_one_combo_v2(args)
+        assert len(results) == 5
+        metrics = {r["metric"] for r in results}
+        assert metrics == {"mi", "phi", "flip_rate", "jsd", "kl"}
+
+    def test_result_dict_has_required_keys(self):
+        from simulation import _run_one_combo_v2
+        rng = np.random.default_rng(42)
+        z_i = rng.normal(0, 1.5, size=50)
+        y_orig = (z_i > 0).astype(int)
+        args = (0.5, 0.3, "MANAGE_8b", 5, 50, 42, z_i, y_orig)
+        results = _run_one_combo_v2(args)
+        for r in results:
+            assert r["sigma_pert"] == 0.5
+            assert r["sigma"] == 0.3
+            assert r["condition"] == "MANAGE_8b"
+            assert 0.0 <= r["detection_rate"] <= 1.0
+            assert 0.0 <= r["mean_p_value"] <= 1.0
+
+    def test_deterministic(self):
+        from simulation import _run_one_combo_v2
+        rng = np.random.default_rng(42)
+        z_i = rng.normal(0, 1.5, size=50)
+        y_orig = (z_i > 0).astype(int)
+        args = (0.5, 0.3, "MANAGE_8b", 10, 50, 42, z_i, y_orig)
+        r1 = _run_one_combo_v2(args)
+        r2 = _run_one_combo_v2(args)
+        for a, b in zip(r1, r2):
+            assert a["detection_rate"] == b["detection_rate"]
+            assert a["mean_p_value"] == b["mean_p_value"]

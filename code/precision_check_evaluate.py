@@ -171,6 +171,8 @@ def main():
     parser.add_argument('--total_gpus', type=int, default=1, help='Total GPUs')
     parser.add_argument('--sample_size', type=int, default=None,
                         help='Limit samples for testing')
+    parser.add_argument('--scenario', type=str, default='precision_check',
+                        help='Scenario name for result/checkpoint file naming')
 
     args = parser.parse_args()
 
@@ -185,8 +187,8 @@ def main():
 
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     os.makedirs(args.output_dir, exist_ok=True)
-    ckpt_path = checkpoint_path(args.checkpoint_dir, "precision_check", ms, args.gpu_id, args.total_gpus)
-    res_path = result_path(args.output_dir, "precision_check", ms, args.gpu_id, args.total_gpus)
+    ckpt_path = checkpoint_path(args.checkpoint_dir, args.scenario, ms, args.gpu_id, args.total_gpus)
+    res_path = result_path(args.output_dir, args.scenario, ms, args.gpu_id, args.total_gpus)
 
     print("=" * 40)
     print("Precision Check: Gender Question Evaluation")
@@ -239,7 +241,7 @@ def main():
         json.dump(results, f, indent=2)
     print(f"\nResults saved to: {res_path}")
 
-    mark_complete(args.checkpoint_dir, "precision_check", ms, args.gpu_id, args.total_gpus)
+    mark_complete(args.checkpoint_dir, args.scenario, ms, args.gpu_id, args.total_gpus)
 
     print(f"\nGPU {args.gpu_id} complete: {len(results)} samples evaluated")
 

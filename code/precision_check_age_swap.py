@@ -191,11 +191,12 @@ def context_id_to_seed(context_id):
     return int(hashlib.md5(context_id.encode()).hexdigest(), 16) % (2**31)
 
 
-def run_age_swap(dataset_path, tokenizer=None):
-    """Apply age bracket swap to all original non-conversational samples.
+def apply_age_perturbation(dataset_path, compute_new_age, tokenizer=None):
+    """Apply an age perturbation to all original non-conversational samples.
 
     Args:
         dataset_path: Path to data_with_baselines.csv
+        compute_new_age: Callable(original_age, context_id) -> int
         tokenizer: Optional HuggingFace tokenizer for token edit distance
 
     Returns:
@@ -234,8 +235,7 @@ def run_age_swap(dataset_path, tokenizer=None):
             continue
 
         original_age, matched_string, match_start = extraction
-        seed = context_id_to_seed(context_id)
-        new_age = compute_target_age(original_age, seed)
+        new_age = compute_new_age(original_age, context_id)
         swapped_text = replace_age(text, matched_string, new_age, match_start=match_start)
         # Replace any remaining occurrences of the original age (e.g., in EHR headers
         # or body text that the primary pattern-based replacement missed).
@@ -258,6 +258,24 @@ def run_age_swap(dataset_path, tokenizer=None):
         })
 
     return results
+
+
+def run_age_swap(dataset_path, tokenizer=None):
+    """Apply age bracket swap to all original non-conversational samples.
+
+    Args:
+        dataset_path: Path to data_with_baselines.csv
+        tokenizer: Optional HuggingFace tokenizer for token edit distance
+
+    Returns:
+        list of dicts with keys: context_id, dataset, original_text,
+            age_swapped_text, original_age, new_age, token_change_pct,
+            age_extraction_failed
+    """
+    def bracket_swap(original_age, context_id):
+        seed = context_id_to_seed(context_id)
+        return compute_target_age(original_age, seed)
+    return apply_age_perturbation(dataset_path, bracket_swap, tokenizer)
 
 
 def main():

@@ -1,5 +1,5 @@
 # ABOUTME: Statistical analysis comparing perturbation effects vs baselines using 5 metrics
-# ABOUTME: Loads JSON evaluation results, applies BH correction, supports calibrated + neutral baselines
+# ABOUTME: Loads JSON evaluation results, applies Bonferroni correction, supports calibrated + neutral baselines
 
 import numpy as np
 import pandas as pd
@@ -24,21 +24,11 @@ def majority_vote(responses):
     return 1 if sum(responses) > len(responses) / 2 else 0
 
 
-def benjamini_hochberg(p_values):
-    """Benjamini-Hochberg FDR correction. Returns adjusted p-values."""
+def bonferroni_correct(p_values):
+    """Bonferroni correction. Returns adjusted p-values (raw * n, capped at 1)."""
     p_values = np.asarray(p_values)
     n = len(p_values)
-    sorted_idx = np.argsort(p_values)
-    sorted_pvals = p_values[sorted_idx]
-
-    adjusted = np.empty(n)
-    adjusted[-1] = sorted_pvals[-1]
-    for i in range(n - 2, -1, -1):
-        adjusted[i] = min(sorted_pvals[i] * n / (i + 1), adjusted[i + 1])
-
-    result = np.empty(n)
-    result[sorted_idx] = np.minimum(adjusted, 1.0)
-    return result
+    return np.minimum(p_values * n, 1.0)
 
 
 def _extract_vectors(eval_results, pert_type, baseline_type, task):
@@ -85,7 +75,7 @@ def _extract_vectors(eval_results, pert_type, baseline_type, task):
 
 
 def run_analysis(eval_path, output_path):
-    """Run full analysis with all 5 metrics, both baselines, BH correction.
+    """Run full analysis with all 5 metrics, both baselines, Bonferroni correction.
 
     Args:
         eval_path: Path to JSON evaluation results from main_evaluate.py
@@ -149,9 +139,9 @@ def run_analysis(eval_path, output_path):
 
     results_df = pd.DataFrame(results)
 
-    # Apply BH correction per metric x baseline_type cell
+    # Apply Bonferroni correction per metric x baseline_type cell
     # (each cell has 4 perturbation_types x 3 tasks = 12 p-values)
-    results_df['p_value_bh'] = np.nan
+    results_df['p_value_bonf'] = np.nan
     for metric_name in list(POPULATION_METRICS) + list(SAMPLE_METRICS):
         for baseline_type in ['calibrated', 'neutral']:
             mask = (
@@ -160,7 +150,7 @@ def run_analysis(eval_path, output_path):
             )
             if mask.sum() > 0:
                 raw_pvals = results_df.loc[mask, 'p_value'].values
-                results_df.loc[mask, 'p_value_bh'] = benjamini_hochberg(raw_pvals)
+                results_df.loc[mask, 'p_value_bonf'] = bonferroni_correct(raw_pvals)
 
     results_df.to_excel(output_path, index=False)
     print(f"Results saved to: {output_path}")
@@ -169,15 +159,15 @@ def run_analysis(eval_path, output_path):
     print("Summary")
     print("=" * 60)
     for _, row in results_df.iterrows():
-        sig = "***" if row['p_value_bh'] < 0.001 else "**" if row['p_value_bh'] < 0.01 else "*" if row['p_value_bh'] < 0.05 else ""
+        sig = "***" if row['p_value_bonf'] < 0.001 else "**" if row['p_value_bonf'] < 0.01 else "*" if row['p_value_bonf'] < 0.05 else ""
         print(f"{row['perturbation_type']:15} {row['baseline_type']:12} {row['task']:10} "
               f"{row['metric']:10} diff={row['observed_diff']:+.4f} "
-              f"p={row['p_value']:.4f} p_bh={row['p_value_bh']:.4f} {sig}")
+              f"p={row['p_value']:.4f} p_bonf={row['p_value_bonf']:.4f} {sig}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Perturbation vs baseline analysis with 5 metrics and BH correction"
+        description="Perturbation vs baseline analysis with 5 metrics and Bonferroni correction"
     )
     parser.add_argument('--evaluation', type=str, required=True,
                         help='Path to JSON evaluation results')

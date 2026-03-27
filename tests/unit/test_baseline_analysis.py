@@ -1,5 +1,5 @@
-# ABOUTME: Tests for baseline analysis with all 5 metrics, BH correction, both baselines
-# ABOUTME: Verifies benjamini_hochberg, run_analysis JSON loading, and metric integration
+# ABOUTME: Tests for baseline analysis with all 5 metrics, Bonferroni correction, both baselines
+# ABOUTME: Verifies bonferroni_correct, run_analysis JSON loading, and metric integration
 
 import pytest
 import numpy as np
@@ -16,55 +16,56 @@ def _read_source():
         return f.read()
 
 
-class TestBenjaminiHochberg:
-    """Tests for Benjamini-Hochberg FDR correction."""
+class TestBonferroniCorrect:
+    """Tests for Bonferroni correction."""
 
     def test_single_pvalue_unchanged(self):
-        """Single p-value should be returned unchanged."""
-        from baseline_analysis import benjamini_hochberg
-        result = benjamini_hochberg(np.array([0.03]))
+        """Single p-value should be returned unchanged (n=1)."""
+        from baseline_analysis import bonferroni_correct
+        result = bonferroni_correct(np.array([0.03]))
         assert np.isclose(result[0], 0.03)
 
     def test_all_significant_remain_significant(self):
         """Very small p-values should remain significant after correction."""
-        from baseline_analysis import benjamini_hochberg
+        from baseline_analysis import bonferroni_correct
         pvals = np.array([0.001, 0.002, 0.003])
-        adjusted = benjamini_hochberg(pvals)
+        adjusted = bonferroni_correct(pvals)
+        # Bonferroni: p * 3 => [0.003, 0.006, 0.009], all < 0.05
         assert all(p < 0.05 for p in adjusted)
 
     def test_adjusted_geq_raw(self):
         """Adjusted p-values must be >= raw p-values."""
-        from baseline_analysis import benjamini_hochberg
+        from baseline_analysis import bonferroni_correct
         pvals = np.array([0.01, 0.04, 0.03, 0.08, 0.5])
-        adjusted = benjamini_hochberg(pvals)
+        adjusted = bonferroni_correct(pvals)
         assert all(a >= r - 1e-10 for a, r in zip(adjusted, pvals))
 
     def test_adjusted_capped_at_one(self):
         """Adjusted p-values must not exceed 1.0."""
-        from baseline_analysis import benjamini_hochberg
+        from baseline_analysis import bonferroni_correct
         pvals = np.array([0.5, 0.7, 0.9])
-        adjusted = benjamini_hochberg(pvals)
+        adjusted = bonferroni_correct(pvals)
         assert all(p <= 1.0 for p in adjusted)
 
-    def test_monotonicity_of_adjusted(self):
-        """Sorted adjusted p-values must be non-decreasing."""
-        from baseline_analysis import benjamini_hochberg
-        pvals = np.array([0.01, 0.04, 0.03, 0.08, 0.5])
-        adjusted = benjamini_hochberg(pvals)
-        sorted_adj = np.sort(adjusted)
-        assert all(sorted_adj[i] <= sorted_adj[i + 1] + 1e-10
-                   for i in range(len(sorted_adj) - 1))
-
     def test_known_example(self):
-        """Verify against hand-calculated BH correction values."""
-        from baseline_analysis import benjamini_hochberg
+        """Verify against hand-calculated Bonferroni correction values."""
+        from baseline_analysis import bonferroni_correct
         pvals = np.array([0.01, 0.02, 0.03, 0.10, 0.50])
-        adjusted = benjamini_hochberg(pvals)
+        adjusted = bonferroni_correct(pvals)
+        # Bonferroni: p * 5, capped at 1.0
         assert np.isclose(adjusted[0], 0.05)
-        assert np.isclose(adjusted[1], 0.05)
-        assert np.isclose(adjusted[2], 0.05)
-        assert np.isclose(adjusted[3], 0.125)
-        assert np.isclose(adjusted[4], 0.50)
+        assert np.isclose(adjusted[1], 0.10)
+        assert np.isclose(adjusted[2], 0.15)
+        assert np.isclose(adjusted[3], 0.50)
+        assert np.isclose(adjusted[4], 1.00)
+
+    def test_twelve_tests_threshold(self):
+        """With 12 tests, raw p < 0.05/12 should remain significant."""
+        from baseline_analysis import bonferroni_correct
+        pvals = np.array([0.004, 0.005] + [0.5] * 10)
+        adjusted = bonferroni_correct(pvals)
+        assert adjusted[0] < 0.05  # 0.004 * 12 = 0.048 < 0.05
+        assert adjusted[1] >= 0.05  # 0.005 * 12 = 0.060 >= 0.05
 
 
 class TestUsesAllMetrics:
@@ -199,8 +200,8 @@ class TestRunAnalysisJSON:
             f"Expected perturbation types {expected_types} but got {actual_types}"
         )
 
-    def test_output_has_bh_adjusted_pvalues(self, tmp_path):
-        """Output must contain BH-adjusted p-values."""
+    def test_output_has_bonferroni_adjusted_pvalues(self, tmp_path):
+        """Output must contain Bonferroni-adjusted p-values."""
         from baseline_analysis import run_analysis
         import pandas as pd
 
@@ -213,9 +214,9 @@ class TestRunAnalysisJSON:
         run_analysis(eval_path, output_path)
 
         results = pd.read_excel(output_path)
-        assert 'p_value_bh' in results.columns, "Missing BH-adjusted p-value column"
-        assert all(results['p_value_bh'] >= results['p_value'] - 1e-10), (
-            "BH-adjusted p-values must be >= raw p-values"
+        assert 'p_value_bonf' in results.columns, "Missing Bonferroni-adjusted p-value column"
+        assert all(results['p_value_bonf'] >= results['p_value'] - 1e-10), (
+            "Bonferroni-adjusted p-values must be >= raw p-values"
         )
 
     def test_output_has_required_columns(self, tmp_path):
@@ -234,7 +235,7 @@ class TestRunAnalysisJSON:
         results = pd.read_excel(output_path)
         required_cols = [
             'perturbation_type', 'baseline_type', 'task', 'metric',
-            'observed_diff', 'p_value', 'p_value_bh', 'n_cases',
+            'observed_diff', 'p_value', 'p_value_bonf', 'n_cases',
         ]
         for col in required_cols:
             assert col in results.columns, f"Missing column: {col}"

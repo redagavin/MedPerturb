@@ -17,18 +17,14 @@ SAMPLE_METRICS = {"jsd": jsd, "kl": kl}
 
 PERTURBATION_TYPES = ['gender_swap', 'gender_remove', 'uncertain', 'colorful']
 TASKS = ['MANAGE', 'VISIT', 'RESOURCE']
+BONFERRONI_ALPHA = 0.05
+BONFERRONI_N_TESTS = len(PERTURBATION_TYPES) * len(TASKS)  # 12
+BONFERRONI_THRESHOLD = BONFERRONI_ALPHA / BONFERRONI_N_TESTS
 
 
 def majority_vote(responses):
     """Return majority vote from list of 0/1 responses."""
     return 1 if sum(responses) > len(responses) / 2 else 0
-
-
-def bonferroni_correct(p_values):
-    """Bonferroni correction. Returns adjusted p-values (raw * n, capped at 1)."""
-    p_values = np.asarray(p_values)
-    n = len(p_values)
-    return np.minimum(p_values * n, 1.0)
 
 
 def _extract_vectors(eval_results, pert_type, baseline_type, task):
@@ -139,30 +135,22 @@ def run_analysis(eval_path, output_path):
 
     results_df = pd.DataFrame(results)
 
-    # Apply Bonferroni correction per metric x baseline_type cell
-    # (each cell has 4 perturbation_types x 3 tasks = 12 p-values)
-    results_df['p_value_bonf'] = np.nan
-    for metric_name in list(POPULATION_METRICS) + list(SAMPLE_METRICS):
-        for baseline_type in ['calibrated', 'neutral']:
-            mask = (
-                (results_df['metric'] == metric_name)
-                & (results_df['baseline_type'] == baseline_type)
-            )
-            if mask.sum() > 0:
-                raw_pvals = results_df.loc[mask, 'p_value'].values
-                results_df.loc[mask, 'p_value_bonf'] = bonferroni_correct(raw_pvals)
+    # Bonferroni correction: reject if raw p < alpha / n_tests
+    results_df['significant'] = results_df['p_value'] < BONFERRONI_THRESHOLD
 
     results_df.to_excel(output_path, index=False)
     print(f"Results saved to: {output_path}")
+    print(f"Bonferroni threshold: p < {BONFERRONI_THRESHOLD:.6f} "
+          f"(alpha={BONFERRONI_ALPHA}, n_tests={BONFERRONI_N_TESTS})")
 
     print("\n" + "=" * 60)
     print("Summary")
     print("=" * 60)
     for _, row in results_df.iterrows():
-        sig = "***" if row['p_value_bonf'] < 0.001 else "**" if row['p_value_bonf'] < 0.01 else "*" if row['p_value_bonf'] < 0.05 else ""
+        sig = "*" if row['significant'] else ""
         print(f"{row['perturbation_type']:15} {row['baseline_type']:12} {row['task']:10} "
               f"{row['metric']:10} diff={row['observed_diff']:+.4f} "
-              f"p={row['p_value']:.4f} p_bonf={row['p_value_bonf']:.4f} {sig}")
+              f"p={row['p_value']:.4f} {sig}")
 
 
 if __name__ == "__main__":

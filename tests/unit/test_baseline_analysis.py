@@ -16,56 +16,28 @@ def _read_source():
         return f.read()
 
 
-class TestBonferroniCorrect:
-    """Tests for Bonferroni correction."""
+class TestBonferroniThreshold:
+    """Tests for Bonferroni correction via threshold."""
 
-    def test_single_pvalue_unchanged(self):
-        """Single p-value should be returned unchanged (n=1)."""
-        from baseline_analysis import bonferroni_correct
-        result = bonferroni_correct(np.array([0.03]))
-        assert np.isclose(result[0], 0.03)
+    def test_threshold_value(self):
+        """Bonferroni threshold should be alpha / n_tests."""
+        from baseline_analysis import BONFERRONI_THRESHOLD, BONFERRONI_ALPHA, BONFERRONI_N_TESTS
+        assert np.isclose(BONFERRONI_THRESHOLD, BONFERRONI_ALPHA / BONFERRONI_N_TESTS)
 
-    def test_all_significant_remain_significant(self):
-        """Very small p-values should remain significant after correction."""
-        from baseline_analysis import bonferroni_correct
-        pvals = np.array([0.001, 0.002, 0.003])
-        adjusted = bonferroni_correct(pvals)
-        # Bonferroni: p * 3 => [0.003, 0.006, 0.009], all < 0.05
-        assert all(p < 0.05 for p in adjusted)
+    def test_n_tests_is_twelve(self):
+        """4 perturbation types x 3 tasks = 12 tests per cell."""
+        from baseline_analysis import BONFERRONI_N_TESTS
+        assert BONFERRONI_N_TESTS == 12
 
-    def test_adjusted_geq_raw(self):
-        """Adjusted p-values must be >= raw p-values."""
-        from baseline_analysis import bonferroni_correct
-        pvals = np.array([0.01, 0.04, 0.03, 0.08, 0.5])
-        adjusted = bonferroni_correct(pvals)
-        assert all(a >= r - 1e-10 for a, r in zip(adjusted, pvals))
+    def test_below_threshold_is_significant(self):
+        """p-value below threshold should be significant."""
+        from baseline_analysis import BONFERRONI_THRESHOLD
+        assert 0.004 < BONFERRONI_THRESHOLD  # 0.004 < 0.004167
 
-    def test_adjusted_capped_at_one(self):
-        """Adjusted p-values must not exceed 1.0."""
-        from baseline_analysis import bonferroni_correct
-        pvals = np.array([0.5, 0.7, 0.9])
-        adjusted = bonferroni_correct(pvals)
-        assert all(p <= 1.0 for p in adjusted)
-
-    def test_known_example(self):
-        """Verify against hand-calculated Bonferroni correction values."""
-        from baseline_analysis import bonferroni_correct
-        pvals = np.array([0.01, 0.02, 0.03, 0.10, 0.50])
-        adjusted = bonferroni_correct(pvals)
-        # Bonferroni: p * 5, capped at 1.0
-        assert np.isclose(adjusted[0], 0.05)
-        assert np.isclose(adjusted[1], 0.10)
-        assert np.isclose(adjusted[2], 0.15)
-        assert np.isclose(adjusted[3], 0.50)
-        assert np.isclose(adjusted[4], 1.00)
-
-    def test_twelve_tests_threshold(self):
-        """With 12 tests, raw p < 0.05/12 should remain significant."""
-        from baseline_analysis import bonferroni_correct
-        pvals = np.array([0.004, 0.005] + [0.5] * 10)
-        adjusted = bonferroni_correct(pvals)
-        assert adjusted[0] < 0.05  # 0.004 * 12 = 0.048 < 0.05
-        assert adjusted[1] >= 0.05  # 0.005 * 12 = 0.060 >= 0.05
+    def test_above_threshold_is_not_significant(self):
+        """p-value above threshold should not be significant."""
+        from baseline_analysis import BONFERRONI_THRESHOLD
+        assert 0.005 > BONFERRONI_THRESHOLD  # 0.005 > 0.004167
 
 
 class TestUsesAllMetrics:
@@ -200,9 +172,9 @@ class TestRunAnalysisJSON:
             f"Expected perturbation types {expected_types} but got {actual_types}"
         )
 
-    def test_output_has_bonferroni_adjusted_pvalues(self, tmp_path):
-        """Output must contain Bonferroni-adjusted p-values."""
-        from baseline_analysis import run_analysis
+    def test_output_has_significant_column(self, tmp_path):
+        """Output must contain boolean significant column."""
+        from baseline_analysis import run_analysis, BONFERRONI_THRESHOLD
         import pandas as pd
 
         eval_results = self._make_eval_results(n_samples=20)
@@ -214,9 +186,11 @@ class TestRunAnalysisJSON:
         run_analysis(eval_path, output_path)
 
         results = pd.read_excel(output_path)
-        assert 'p_value_bonf' in results.columns, "Missing Bonferroni-adjusted p-value column"
-        assert all(results['p_value_bonf'] >= results['p_value'] - 1e-10), (
-            "Bonferroni-adjusted p-values must be >= raw p-values"
+        assert 'significant' in results.columns, "Missing significant column"
+        # Verify significant column matches threshold logic
+        expected = results['p_value'] < BONFERRONI_THRESHOLD
+        assert all(results['significant'] == expected), (
+            "significant column must match p_value < threshold"
         )
 
     def test_output_has_required_columns(self, tmp_path):
@@ -235,7 +209,7 @@ class TestRunAnalysisJSON:
         results = pd.read_excel(output_path)
         required_cols = [
             'perturbation_type', 'baseline_type', 'task', 'metric',
-            'observed_diff', 'p_value', 'p_value_bonf', 'n_cases',
+            'observed_diff', 'p_value', 'significant', 'n_cases',
         ]
         for col in required_cols:
             assert col in results.columns, f"Missing column: {col}"

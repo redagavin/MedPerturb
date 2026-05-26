@@ -84,9 +84,13 @@ def batched_sample(model, tokenizer, prompts, n_samples=10, max_new_tokens=512):
     B = inputs.input_ids.shape[0]
     prompt_len = inputs.input_ids.shape[1]
 
-    outputs = model.generate(
-        input_ids=inputs.input_ids,
-        attention_mask=inputs.attention_mask,
+    # Use explicit GenerationConfig to ensure our params override the model's
+    # generation_config.json defaults (Llama ships temperature=0.6, top_p=0.9).
+    # Passing via kwargs in transformers >=4.57 produces spurious "not valid" warnings.
+    from transformers import GenerationConfig
+    import copy
+    gen_config = copy.deepcopy(model.generation_config)
+    gen_config.update(
         do_sample=True,
         temperature=0.7,
         top_p=1.0,
@@ -94,6 +98,11 @@ def batched_sample(model, tokenizer, prompts, n_samples=10, max_new_tokens=512):
         num_return_sequences=n_samples,
         max_new_tokens=max_new_tokens,
         pad_token_id=tokenizer.pad_token_id,
+    )
+    outputs = model.generate(
+        input_ids=inputs.input_ids,
+        attention_mask=inputs.attention_mask,
+        generation_config=gen_config,
     )
 
     generated = outputs[:, prompt_len:]

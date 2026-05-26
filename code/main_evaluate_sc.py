@@ -85,11 +85,22 @@ def batched_sample(model, tokenizer, prompts, n_samples=10, max_new_tokens=512):
     prompt_len = inputs.input_ids.shape[1]
 
     # Use explicit GenerationConfig to override temperature while keeping
-    # the model's own top_p/top_k defaults. Llama ships top_p=0.9, which
-    # is required for FP8-quantized 70B models (top_p=1.0 causes NaN in
-    # the probability tensor due to FP8 precision loss at distribution tails).
-    from transformers import GenerationConfig
+    # the model's own top_p/top_k defaults.
+    from transformers import GenerationConfig, LogitsProcessorList, LogitsProcessor
     import copy
+
+    class _SafeLogitsProcessor(LogitsProcessor):
+        """Clamp extreme logit values that FP8 quantization can produce.
+        Without this, multinomial sampling crashes with 'probability tensor
+        contains inf, nan or element < 0' on FP8-quantized 70B models."""
+        def __call__(self, input_ids, scores):
+            scores = torch.where(
+                torch.isfinite(scores),
+                scores.clamp(min=-100, max=100),
+                torch.zeros_like(scores),
+            )
+            return scores
+
     gen_config = copy.deepcopy(model.generation_config)
     gen_config.update(
         do_sample=True,
@@ -102,6 +113,7 @@ def batched_sample(model, tokenizer, prompts, n_samples=10, max_new_tokens=512):
         input_ids=inputs.input_ids,
         attention_mask=inputs.attention_mask,
         generation_config=gen_config,
+        logits_processor=LogitsProcessorList([_SafeLogitsProcessor()]),
     )
 
     generated = outputs[:, prompt_len:]

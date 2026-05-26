@@ -109,3 +109,130 @@ def atomic_write_json(data, path):
         json.dump(data, f, indent=2)
         tmp_path = f.name
     os.replace(tmp_path, path)
+
+
+SC_EXPECTED_KEYS = frozenset(f'{p}_{t}' for p in SC_CONDITIONS for t in SC_TASKS)
+
+
+def evaluate_case_sc(evaluator, case_row, n_samples, batch_size, max_new_tokens):
+    """Run SC evaluation for one case across all conditions and tasks.
+
+    Returns dict with 15 keys (one per condition_task), each containing
+    sample_index, model_responses, extractor_outputs, extraction_methods,
+    binary_answers, and logit_probs.
+    """
+    prompts = []
+    for pert in SC_CONDITIONS:
+        patient_info = case_row[f'{pert}_text']
+        for task in SC_TASKS:
+            user_content = build_triage_prompt(patient_info, task)
+            prompts.append((pert, task, user_content))
+
+    results = {}
+    for start in range(0, len(prompts), batch_size):
+        batch = prompts[start:start + batch_size]
+        batch_contents = [p[2] for p in batch]
+        decoded = batched_sample(
+            evaluator.model, evaluator.tokenizer,
+            batch_contents, n_samples=n_samples, max_new_tokens=max_new_tokens,
+        )
+        for (pert, task, user_content), samples in zip(batch, decoded):
+            extractions = [evaluator._extract_binary_answer(s, task) for s in samples]
+            results[f"{pert}_{task}"] = {
+                "sample_index": list(range(n_samples)),
+                "model_responses": samples,
+                "extractor_outputs": [e["extractor_output"] for e in extractions],
+                "extraction_methods": [e["extraction_method"] for e in extractions],
+                "binary_answers": [e["answer"] for e in extractions],
+                "logit_probs": evaluator.extract_logit_probs(user_content),
+            }
+    return results
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Self-consistency main-experiment evaluation"
+    )
+    parser.add_argument('--model', type=str, required=True)
+    parser.add_argument('--dataset', type=str, default='data_with_baselines.csv')
+    parser.add_argument('--output', type=str, required=True)
+    parser.add_argument('--checkpoint', type=str, required=True)
+    parser.add_argument('--n_samples', type=int, default=10)
+    parser.add_argument('--batch_size', type=int, default=4)
+    parser.add_argument('--max_new_tokens', type=int, default=512)
+    parser.add_argument('--rng_seed', type=int, default=42)
+    parser.add_argument('--sample_size', type=int, default=None)
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    torch.manual_seed(args.rng_seed)
+
+    completed_cids = set()
+    results = []
+    if os.path.exists(args.checkpoint):
+        try:
+            with open(args.checkpoint) as f:
+                results = json.load(f)
+            completed_cids = {r['context_id'] for r in results}
+            print(f"Resuming: {len(completed_cids)} cases already done.")
+        except (json.JSONDecodeError, KeyError) as e:
+            corrupt_path = f"{args.checkpoint}.corrupt.{int(time.time())}"
+            os.rename(args.checkpoint, corrupt_path)
+            print(
+                f"WARNING: corrupt checkpoint renamed to {corrupt_path}: {e}",
+                file=sys.stderr,
+            )
+            results = []
+            completed_cids = set()
+
+    # Validate completeness of resumed cases
+    valid_results = []
+    for r in results:
+        if SC_EXPECTED_KEYS.issubset(set(r.keys())):
+            valid_results.append(r)
+        else:
+            print(
+                f"WARNING: dropping incomplete case {r.get('context_id')}",
+                file=sys.stderr,
+            )
+    results = valid_results
+    completed_cids = {r['context_id'] for r in results}
+
+    samples = load_main_experiment_data(args.dataset)
+    if args.sample_size:
+        samples = samples[:args.sample_size]
+
+    evaluator = ModelEvaluator(args.model)
+    setup_batched_tokenizer(evaluator.tokenizer)
+
+    for sample in tqdm(samples, desc='SC eval'):
+        cid = sample['context_id']
+        if cid in completed_cids:
+            continue
+        try:
+            case_result = evaluate_case_sc(
+                evaluator, sample,
+                n_samples=args.n_samples,
+                batch_size=args.batch_size,
+                max_new_tokens=args.max_new_tokens,
+            )
+        except Exception as e:
+            print(f"ERROR on case {cid}: {e}", file=sys.stderr)
+            case_result = {'error': str(e)}
+        case_result['context_id'] = cid
+        case_result['rng_seed'] = args.rng_seed
+        results.append(case_result)
+        atomic_write_json(results, args.checkpoint)
+
+    atomic_write_json(results, args.output)
+    n_errors = sum(1 for r in results if 'error' in r)
+    print(
+        f"Wrote {len(results)} cases to {args.output}"
+        + (f" ({n_errors} with errors)" if n_errors else "")
+    )
+
+
+if __name__ == "__main__":
+    main()

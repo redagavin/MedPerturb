@@ -107,6 +107,8 @@ def atomic_write_json(data, path):
     os.makedirs(dir_, exist_ok=True)
     with tempfile.NamedTemporaryFile('w', delete=False, dir=dir_, suffix='.tmp') as f:
         json.dump(data, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
         tmp_path = f.name
     os.replace(tmp_path, path)
 

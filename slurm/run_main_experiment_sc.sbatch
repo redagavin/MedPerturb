@@ -14,6 +14,7 @@
 # ABOUTME: Each task gets 1 H200, processes ~25 cases; merge shards afterward
 
 MODEL=${1:-"meta-llama/Llama-3.1-8B-Instruct"}
+BATCH_SIZE=${2:-4}
 MEDPERTURB_DIR="${SLURM_SUBMIT_DIR}"
 
 source ~/.bashrc
@@ -34,7 +35,7 @@ python code/main_evaluate_sc.py \
     --output_dir results \
     --checkpoint_dir checkpoints/main_experiment_sc \
     --n_samples 10 \
-    --batch_size 4 \
+    --batch_size ${BATCH_SIZE} \
     --max_new_tokens 512 \
     --rng_seed 42
 

@@ -117,10 +117,11 @@ def batched_sample(model, tokenizer, prompts, n_samples=10, max_new_tokens=512):
     gen_config.update(
         do_sample=True,
         temperature=0.7,
-        num_return_sequences=n_samples,
         max_new_tokens=max_new_tokens,
         pad_token_id=tokenizer.pad_token_id,
     )
+    if n_samples > 1:
+        gen_config.update(num_return_sequences=n_samples)
     logits_proc = _SafeLogitsProcessor()
     outputs = model.generate(
         input_ids=inputs.input_ids,
@@ -172,11 +173,20 @@ def evaluate_case_sc(evaluator, case_row, n_samples, batch_size, max_new_tokens)
     for start in range(0, len(prompts), batch_size):
         batch = prompts[start:start + batch_size]
         batch_contents = [p[2] for p in batch]
-        decoded = batched_sample(
-            evaluator.model, evaluator.tokenizer,
-            batch_contents, n_samples=n_samples, max_new_tokens=max_new_tokens,
-        )
-        for (pert, task, user_content), samples in zip(batch, decoded):
+
+        # Sequential sampling: call generate with 1 sample at a time, loop n_samples
+        # times. Required because num_return_sequences > 1 causes 75% NaN logits
+        # under FP8 quantization (70B), producing garbage text.
+        per_prompt_samples = [[] for _ in batch]
+        for _ in range(n_samples):
+            decoded = batched_sample(
+                evaluator.model, evaluator.tokenizer,
+                batch_contents, n_samples=1, max_new_tokens=max_new_tokens,
+            )
+            for i, one_sample in enumerate(decoded):
+                per_prompt_samples[i].append(one_sample[0])
+
+        for (pert, task, user_content), samples in zip(batch, per_prompt_samples):
             extractions = [evaluator._extract_binary_answer(s, task) for s in samples]
             results[f"{pert}_{task}"] = {
                 "sample_index": list(range(n_samples)),

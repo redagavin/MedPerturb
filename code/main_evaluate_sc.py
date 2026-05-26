@@ -16,6 +16,7 @@ from tqdm import tqdm
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from evaluate_models import ModelEvaluator
 from main_evaluate import VARIANT_NAMES, load_main_experiment_data
+from eval_utils import detect_slurm, shard_samples
 
 
 # ---- Prompt template ----
@@ -84,21 +85,32 @@ def batched_sample(model, tokenizer, prompts, n_samples=10, max_new_tokens=512):
     B = inputs.input_ids.shape[0]
     prompt_len = inputs.input_ids.shape[1]
 
-    # Use explicit GenerationConfig to override temperature while keeping
-    # the model's own top_p/top_k defaults.
     from transformers import GenerationConfig, LogitsProcessorList, LogitsProcessor
     import copy
 
     class _SafeLogitsProcessor(LogitsProcessor):
-        """Clamp extreme logit values that FP8 quantization can produce.
+        """Sanitize logit values that FP8 quantization can corrupt.
         Without this, multinomial sampling crashes with 'probability tensor
-        contains inf, nan or element < 0' on FP8-quantized 70B models."""
+        contains inf, nan or element < 0' on FP8-quantized 70B models.
+        Tracks how many tokens are affected for scientific-validity auditing."""
+        def __init__(self):
+            self.n_nan_replaced = 0
+            self.n_inf_replaced = 0
+            self.n_clamped = 0
+            self.n_total = 0
+
         def __call__(self, input_ids, scores):
-            scores = torch.where(
-                torch.isfinite(scores),
-                scores.clamp(min=-100, max=100),
-                torch.zeros_like(scores),
-            )
+            self.n_total += scores.numel()
+            nan_mask = torch.isnan(scores)
+            inf_mask = torch.isinf(scores)
+            self.n_nan_replaced += nan_mask.sum().item()
+            self.n_inf_replaced += inf_mask.sum().item()
+            scores = torch.where(nan_mask, torch.full_like(scores, -100.0), scores)
+            scores = torch.where(inf_mask & (scores > 0), torch.full_like(scores, 100.0), scores)
+            scores = torch.where(inf_mask & (scores < 0), torch.full_like(scores, -100.0), scores)
+            clamp_mask = (scores < -100) | (scores > 100)
+            self.n_clamped += clamp_mask.sum().item()
+            scores = scores.clamp(min=-100, max=100)
             return scores
 
     gen_config = copy.deepcopy(model.generation_config)
@@ -109,12 +121,18 @@ def batched_sample(model, tokenizer, prompts, n_samples=10, max_new_tokens=512):
         max_new_tokens=max_new_tokens,
         pad_token_id=tokenizer.pad_token_id,
     )
+    logits_proc = _SafeLogitsProcessor()
     outputs = model.generate(
         input_ids=inputs.input_ids,
         attention_mask=inputs.attention_mask,
         generation_config=gen_config,
-        logits_processor=LogitsProcessorList([_SafeLogitsProcessor()]),
+        logits_processor=LogitsProcessorList([logits_proc]),
     )
+    if logits_proc.n_nan_replaced > 0 or logits_proc.n_inf_replaced > 0 or logits_proc.n_clamped > 0:
+        print(f"  Logits sanitized: {logits_proc.n_nan_replaced} NaN→-100, "
+              f"{logits_proc.n_inf_replaced} inf→±100, "
+              f"{logits_proc.n_clamped} clamped "
+              f"(of {logits_proc.n_total} total logits)", file=sys.stderr)
 
     generated = outputs[:, prompt_len:]
     flat = tokenizer.batch_decode(generated, skip_special_tokens=True)
@@ -177,35 +195,64 @@ def parse_args():
     )
     parser.add_argument('--model', type=str, required=True)
     parser.add_argument('--dataset', type=str, default='data_with_baselines.csv')
-    parser.add_argument('--output', type=str, required=True)
-    parser.add_argument('--checkpoint', type=str, required=True)
+    parser.add_argument('--output_dir', type=str, default='results')
+    parser.add_argument('--checkpoint_dir', type=str,
+                        default='checkpoints/main_experiment_sc')
     parser.add_argument('--n_samples', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=4)
     parser.add_argument('--max_new_tokens', type=int, default=512)
     parser.add_argument('--rng_seed', type=int, default=42)
+    parser.add_argument('--gpu_id', type=int, default=None)
+    parser.add_argument('--total_gpus', type=int, default=1)
     parser.add_argument('--sample_size', type=int, default=None)
     return parser.parse_args()
 
 
+def _shard_paths(output_dir, checkpoint_dir, model_short, gpu_id, total_gpus):
+    """Build per-shard output/checkpoint paths."""
+    tag = f"{model_short}_gpu{gpu_id}_of_{total_gpus}"
+    return (
+        os.path.join(output_dir, f"main_evaluation_sc_{tag}.json"),
+        os.path.join(checkpoint_dir, f"partial_sc_{tag}.json"),
+    )
+
+
 def main():
     args = parse_args()
-    torch.manual_seed(args.rng_seed)
+
+    # Detect SLURM array job
+    slurm_gpu, slurm_total = detect_slurm()
+    if slurm_gpu is not None:
+        args.gpu_id = slurm_gpu
+        args.total_gpus = slurm_total
+        print(f"Detected SLURM array: GPU {args.gpu_id} of {args.total_gpus}")
+    elif args.gpu_id is None:
+        args.gpu_id = 0
+
+    model_short = (args.model.split('/')[-1].lower().replace('-', '_'))
+    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
+
+    out_path, ckpt_path = _shard_paths(
+        args.output_dir, args.checkpoint_dir,
+        model_short, args.gpu_id, args.total_gpus,
+    )
+
+    torch.manual_seed(args.rng_seed + args.gpu_id)
 
     completed_cids = set()
     results = []
-    if os.path.exists(args.checkpoint):
+    if os.path.exists(ckpt_path):
         try:
-            with open(args.checkpoint) as f:
+            with open(ckpt_path) as f:
                 results = json.load(f)
             completed_cids = {r['context_id'] for r in results}
             print(f"Resuming: {len(completed_cids)} cases already done.")
         except (json.JSONDecodeError, KeyError) as e:
-            corrupt_path = f"{args.checkpoint}.corrupt.{int(time.time())}"
-            os.rename(args.checkpoint, corrupt_path)
-            print(
-                f"WARNING: corrupt checkpoint renamed to {corrupt_path}: {e}",
-                file=sys.stderr,
-            )
+            corrupt = f"{ckpt_path}.corrupt.{int(time.time())}"
+            os.rename(ckpt_path, corrupt)
+            print(f"WARNING: corrupt checkpoint renamed to {corrupt}: {e}",
+                  file=sys.stderr)
             results = []
             completed_cids = set()
 
@@ -215,21 +262,21 @@ def main():
         if SC_EXPECTED_KEYS.issubset(set(r.keys())):
             valid_results.append(r)
         else:
-            print(
-                f"WARNING: dropping incomplete case {r.get('context_id')}",
-                file=sys.stderr,
-            )
+            print(f"WARNING: dropping incomplete case {r.get('context_id')}",
+                  file=sys.stderr)
     results = valid_results
     completed_cids = {r['context_id'] for r in results}
 
     samples = load_main_experiment_data(args.dataset)
+    samples = shard_samples(samples, args.gpu_id, args.total_gpus)
     if args.sample_size:
         samples = samples[:args.sample_size]
+    print(f"GPU {args.gpu_id}: {len(samples)} samples to evaluate")
 
     evaluator = ModelEvaluator(args.model)
     setup_batched_tokenizer(evaluator.tokenizer)
 
-    for sample in tqdm(samples, desc='SC eval'):
+    for sample in tqdm(samples, desc=f'SC eval GPU {args.gpu_id}'):
         cid = sample['context_id']
         if cid in completed_cids:
             continue
@@ -246,9 +293,9 @@ def main():
         case_result['context_id'] = cid
         case_result['rng_seed'] = args.rng_seed
         results.append(case_result)
-        atomic_write_json(results, args.checkpoint)
+        atomic_write_json(results, ckpt_path)
 
-    atomic_write_json(results, args.output)
+    atomic_write_json(results, out_path)
     n_errors = sum(1 for r in results if 'error' in r)
     print(
         f"Wrote {len(results)} cases to {args.output}"

@@ -84,17 +84,16 @@ def batched_sample(model, tokenizer, prompts, n_samples=10, max_new_tokens=512):
     B = inputs.input_ids.shape[0]
     prompt_len = inputs.input_ids.shape[1]
 
-    # Use explicit GenerationConfig to ensure our params override the model's
-    # generation_config.json defaults (Llama ships temperature=0.6, top_p=0.9).
-    # Passing via kwargs in transformers >=4.57 produces spurious "not valid" warnings.
+    # Use explicit GenerationConfig to override temperature while keeping
+    # the model's own top_p/top_k defaults. Llama ships top_p=0.9, which
+    # is required for FP8-quantized 70B models (top_p=1.0 causes NaN in
+    # the probability tensor due to FP8 precision loss at distribution tails).
     from transformers import GenerationConfig
     import copy
     gen_config = copy.deepcopy(model.generation_config)
     gen_config.update(
         do_sample=True,
         temperature=0.7,
-        top_p=1.0,
-        top_k=0,
         num_return_sequences=n_samples,
         max_new_tokens=max_new_tokens,
         pad_token_id=tokenizer.pad_token_id,

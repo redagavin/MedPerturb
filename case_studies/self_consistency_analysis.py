@@ -1,9 +1,12 @@
 # ABOUTME: Self-consistency baseline analysis for MedPerturb main experiment
 # ABOUTME: Computes per-case empirical JSD and aggregate permutation tests
 
+import argparse
+import json
 import math
 import sys
 import numpy as np
+import pandas as pd
 
 
 def jsd_bernoulli(p: float, q: float, base: float = 2.0) -> float:
@@ -119,3 +122,97 @@ def permutation_test_cell(cases, perturbation, task, n_perms, rng,
         'n_dropped_empty': n_dropped_empty,
         'n_dropped_low_count': n_dropped_low_count,
     }
+
+
+PERTURBATIONS = ['gender_swap', 'gender_remove', 'uncertain', 'colorful']
+TASKS = ['MANAGE', 'VISIT', 'RESOURCE']
+N_TESTS_PER_MODEL = len(PERTURBATIONS) * len(TASKS)
+BONFERRONI_THRESHOLD = 0.05 / N_TESTS_PER_MODEL
+
+
+def per_case_jsd_row(case, base=2.0):
+    row = {'context_id': case.get('context_id')}
+    for pert in PERTURBATIONS:
+        for task in TASKS:
+            orig_key = f"original_{task}"
+            pert_key = f"{pert}_{task}"
+            if orig_key not in case or pert_key not in case:
+                row[f"{pert}_{task}"] = None
+                continue
+            orig = [x for x in case[orig_key]['binary_answers'] if x in (0, 1)]
+            pertb = [x for x in case[pert_key]['binary_answers'] if x in (0, 1)]
+            if not orig or not pertb:
+                row[f"{pert}_{task}"] = None
+                continue
+            p = sum(orig) / len(orig)
+            q = sum(pertb) / len(pertb)
+            row[f"{pert}_{task}"] = jsd_bernoulli(p, q, base=base)
+    return row
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Self-consistency baseline analysis for MedPerturb main experiment"
+    )
+    parser.add_argument('--evaluation', type=str, required=True,
+                        help='Path to main_evaluation_sc_<model>.json')
+    parser.add_argument('--output', type=str, required=True,
+                        help='Path to output .xlsx')
+    parser.add_argument('--n_permutations', type=int, default=10000)
+    parser.add_argument('--rng_seed', type=int, default=42)
+    parser.add_argument('--base', type=float, default=2.0)
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    with open(args.evaluation) as f:
+        cases = json.load(f)
+    rng = np.random.default_rng(args.rng_seed)
+
+    drop_log = []
+    summary_rows = []
+    for pert in PERTURBATIONS:
+        for task in TASKS:
+            cell = permutation_test_cell(
+                cases, pert, task,
+                n_perms=args.n_permutations,
+                rng=rng,
+                base=args.base,
+                drop_log=drop_log,
+            )
+            summary_rows.append({
+                'perturbation': pert,
+                'task': task,
+                'n_cases_used': cell['n_cases_used'],
+                'n_active': cell['n_active'],
+                'mean_jsd_observed': cell['observed_mean_jsd'],
+                'mean_jsd_null': cell['null_mean_jsd'],
+                'null_std_jsd': cell['null_std_jsd'],
+                'jsd_excess': cell['jsd_excess'],
+                'p_value': cell['p_value'],
+                'bonferroni_threshold': BONFERRONI_THRESHOLD,
+                'significant': (cell['p_value'] < BONFERRONI_THRESHOLD
+                                if not np.isnan(cell['p_value']) else False),
+                'n_dropped_missing_key': cell['n_dropped_missing_key'],
+                'n_dropped_empty': cell['n_dropped_empty'],
+                'n_dropped_low_count': cell['n_dropped_low_count'],
+            })
+
+    per_case_rows = [per_case_jsd_row(c, base=args.base) for c in cases]
+
+    summary_df = pd.DataFrame(summary_rows)
+    per_case_df = pd.DataFrame(per_case_rows)
+    drop_df = pd.DataFrame(drop_log, columns=['context_id', 'perturbation', 'task', 'reason'])
+
+    with pd.ExcelWriter(args.output, engine='openpyxl') as writer:
+        summary_df.to_excel(writer, sheet_name='Summary', index=False)
+        per_case_df.to_excel(writer, sheet_name='PerCaseJSD', index=False)
+        drop_df.to_excel(writer, sheet_name='DroppedCases', index=False)
+
+    n_sig = int(summary_df['significant'].sum())
+    print(f"Wrote {args.output}: {len(summary_df)} cells, {n_sig} significant after Bonferroni.")
+
+
+if __name__ == "__main__":
+    main()

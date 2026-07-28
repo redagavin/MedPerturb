@@ -29,13 +29,16 @@ def compute(p_yes_orig, p_yes_pert, epsilon=1e-10):
     return float(np.sum(p * np.log2(p / q)))
 
 
-def paired_ttest(orig_probs, pert_probs, base_probs):
+def paired_ttest(orig_probs, pert_probs, base_probs, alternative='two-sided'):
     """Paired t-test comparing KL(orig||pert) vs KL(orig||base) per sample.
 
     Args:
         orig_probs: array of P(Yes) for originals
         pert_probs: array of P(Yes) for perturbations
         base_probs: array of P(Yes) for baselines
+        alternative: 'two-sided' (default), 'greater' (H1: KL_pert > KL_base),
+            or 'less' (H1: KL_pert < KL_base). For KL, the directional
+            alternative when targeted has more effect is 'greater'.
 
     Returns:
         dict with mean_perturbation, mean_baseline, observed_diff,
@@ -50,7 +53,7 @@ def paired_ttest(orig_probs, pert_probs, base_probs):
     kl_base = np.array([compute(o, b) for o, b in zip(orig_probs, base_probs)])
 
     differences = kl_pert - kl_base
-    t_stat, p_value = stats.ttest_rel(kl_pert, kl_base)
+    t_stat, p_value = stats.ttest_rel(kl_pert, kl_base, alternative=alternative)
 
     # ttest_rel returns NaN when all differences are zero (zero variance)
     if np.isnan(p_value):

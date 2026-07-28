@@ -21,6 +21,15 @@ BONFERRONI_ALPHA = 0.05
 BONFERRONI_N_TESTS = len(PERTURBATION_TYPES) * len(TASKS)  # 12
 BONFERRONI_THRESHOLD = BONFERRONI_ALPHA / BONFERRONI_N_TESTS
 
+# Per-metric directional alternative for one-sided test (paper convention)
+ONE_SIDED_ALTERNATIVE = {
+    "flip_rate": "greater",
+    "jsd": "greater",
+    "kl": "greater",
+    "mi": "less",
+    "phi": "less",
+}
+
 
 def majority_vote(responses):
     """Return majority vote from list of 0/1 responses."""
@@ -100,6 +109,10 @@ def run_analysis(eval_path, output_path):
                     test_result = module.bootstrap_test(
                         orig_bin, pert_bin, base_bin
                     )
+                    test_result_one = module.bootstrap_test(
+                        orig_bin, pert_bin, base_bin,
+                        alternative=ONE_SIDED_ALTERNATIVE[name],
+                    )
                     results.append({
                         'perturbation_type': pert_type,
                         'baseline_type': baseline_type,
@@ -107,7 +120,9 @@ def run_analysis(eval_path, output_path):
                         'metric': name,
                         'n_cases': n_cases,
                         'observed_diff': test_result['observed_diff'],
-                        'p_value': test_result['p_value'],
+                        'p_value': test_result['p_value'],                          # legacy: two-sided (unchanged)
+                        'p_value_two_sided': test_result['p_value'],
+                        'p_value_one_sided': test_result_one['p_value'],
                         'ci_low': test_result.get('ci_low'),
                         'ci_high': test_result.get('ci_high'),
                         'statistic_perturbation': test_result['statistic_perturbation'],
@@ -119,6 +134,10 @@ def run_analysis(eval_path, output_path):
                     test_result = module.paired_ttest(
                         orig_prob, pert_prob, base_prob
                     )
+                    test_result_one = module.paired_ttest(
+                        orig_prob, pert_prob, base_prob,
+                        alternative=ONE_SIDED_ALTERNATIVE[name],
+                    )
                     results.append({
                         'perturbation_type': pert_type,
                         'baseline_type': baseline_type,
@@ -126,7 +145,9 @@ def run_analysis(eval_path, output_path):
                         'metric': name,
                         'n_cases': n_cases,
                         'observed_diff': test_result['observed_diff'],
-                        'p_value': test_result['p_value'],
+                        'p_value': test_result['p_value'],                          # legacy: two-sided (unchanged)
+                        'p_value_two_sided': test_result['p_value'],
+                        'p_value_one_sided': test_result_one['p_value'],
                         'ci_low': None,
                         'ci_high': None,
                         'statistic_perturbation': test_result['mean_perturbation'],

@@ -89,17 +89,23 @@ def run_single_simulation(
 
     boot_seed = int(rng.integers(0, 2**31))
 
-    # Per-population metrics: bootstrap tests on binary vectors
+    # Per-population metrics: bootstrap tests on binary vectors.
+    # Direction per metric: FR (greater = more flips = more effect),
+    # MI / phi (less = lower agreement = more effect).
     mi_result = mi.bootstrap_test(orig_bin, pert_bin, base_bin,
-                                  n_bootstrap=n_bootstrap, seed=boot_seed)
+                                  n_bootstrap=n_bootstrap, seed=boot_seed,
+                                  alternative='less')
     phi_result = phi.bootstrap_test(orig_bin, pert_bin, base_bin,
-                                    n_bootstrap=n_bootstrap, seed=boot_seed)
+                                    n_bootstrap=n_bootstrap, seed=boot_seed,
+                                    alternative='less')
     flip_result = flip_rate.bootstrap_test(orig_bin, pert_bin, base_bin,
-                                           n_bootstrap=n_bootstrap, seed=boot_seed)
+                                           n_bootstrap=n_bootstrap, seed=boot_seed,
+                                           alternative='greater')
 
-    # Per-sample metrics: paired t-tests on probability vectors
-    jsd_result = jsd.paired_ttest(p_orig, p_pert, p_base)
-    kl_result = kl.paired_ttest(p_orig, p_pert, p_base)
+    # Per-sample metrics: paired t-tests on probability vectors.
+    # JSD / KL: greater = more divergence = more effect.
+    jsd_result = jsd.paired_ttest(p_orig, p_pert, p_base, alternative='greater')
+    kl_result = kl.paired_ttest(p_orig, p_pert, p_base, alternative='greater')
 
     return {
         "mi": mi_result["p_value"],

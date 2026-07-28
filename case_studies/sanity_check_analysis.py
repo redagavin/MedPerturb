@@ -14,6 +14,15 @@ from metrics import jsd, kl
 POPULATION_METRICS = {"mi": mi, "phi": phi, "flip_rate": flip_rate}
 SAMPLE_METRICS = {"jsd": jsd, "kl": kl}
 
+# Per-metric directional alternative for one-sided test (paper convention)
+ONE_SIDED_ALTERNATIVE = {
+    "flip_rate": "greater",
+    "jsd": "greater",
+    "kl": "greater",
+    "mi": "less",
+    "phi": "less",
+}
+
 
 def majority_vote(responses):
     """Return majority vote from list of 0/1 responses."""
@@ -82,16 +91,30 @@ def run_sanity_check_analysis(eval_results, n_bootstrap=1000):
     for name, module in POPULATION_METRICS.items():
         results[name] = {}
         for btype, (base_bin, _) in baseline_vectors.items():
-            results[name][btype] = module.bootstrap_test(
+            test_two = module.bootstrap_test(
                 orig_bin, swap_bin, base_bin, n_bootstrap=n_bootstrap
             )
+            test_one = module.bootstrap_test(
+                orig_bin, swap_bin, base_bin, n_bootstrap=n_bootstrap,
+                alternative=ONE_SIDED_ALTERNATIVE[name],
+            )
+            test_two['p_value_two_sided'] = test_two['p_value']
+            test_two['p_value_one_sided'] = test_one['p_value']
+            results[name][btype] = test_two
 
     for name, module in SAMPLE_METRICS.items():
         results[name] = {}
         for btype, (_, base_prob) in baseline_vectors.items():
-            results[name][btype] = module.paired_ttest(
+            test_two = module.paired_ttest(
                 orig_prob, swap_prob, base_prob
             )
+            test_one = module.paired_ttest(
+                orig_prob, swap_prob, base_prob,
+                alternative=ONE_SIDED_ALTERNATIVE[name],
+            )
+            test_two['p_value_two_sided'] = test_two['p_value']
+            test_two['p_value_one_sided'] = test_one['p_value']
+            results[name][btype] = test_two
 
     return results
 
@@ -124,7 +147,9 @@ def main():
                 'baseline_type': btype,
                 'n_cases': results['n_cases'],
                 'observed_diff': r['observed_diff'],
-                'p_value': r['p_value'],
+                'p_value': r['p_value'],                       # legacy: two-sided (unchanged)
+                'p_value_two_sided': r['p_value_two_sided'],
+                'p_value_one_sided': r['p_value_one_sided'],
             })
 
     results_df = pd.DataFrame(rows)

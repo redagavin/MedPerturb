@@ -26,6 +26,12 @@ def compute(x, y):
     return (n11 * n00 - n10 * n01) / denom
 
 
-def bootstrap_test(orig, pert, base, n_bootstrap=1000, seed=42):
-    """Bootstrap test comparing compute(orig,pert) vs compute(orig,base)."""
-    return bootstrap_test_common(compute, orig, pert, base, n_bootstrap, seed)
+def bootstrap_test(orig, pert, base, n_bootstrap=1000, seed=42,
+                   alternative='two-sided'):
+    """Bootstrap test comparing compute(orig,pert) vs compute(orig,base).
+
+    For phi, higher = more agreement = less perturbation effect, so the
+    directional alternative when targeted has more effect is alternative='less'.
+    """
+    return bootstrap_test_common(compute, orig, pert, base, n_bootstrap, seed,
+                                 alternative=alternative)

@@ -13,6 +13,13 @@ def compute(x, y):
     return np.mean(x != y)
 
 
-def bootstrap_test(orig, pert, base, n_bootstrap=1000, seed=42):
-    """Bootstrap test comparing compute(orig,pert) vs compute(orig,base)."""
-    return bootstrap_test_common(compute, orig, pert, base, n_bootstrap, seed)
+def bootstrap_test(orig, pert, base, n_bootstrap=1000, seed=42,
+                   alternative='two-sided'):
+    """Bootstrap test comparing compute(orig,pert) vs compute(orig,base).
+
+    For flip rate, higher = more answer changes = more perturbation effect,
+    so the directional alternative when targeted has more effect is
+    alternative='greater'.
+    """
+    return bootstrap_test_common(compute, orig, pert, base, n_bootstrap, seed,
+                                 alternative=alternative)

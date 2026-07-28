@@ -37,13 +37,23 @@ def validate_prob_arrays(orig, pert, base):
             )
 
 
-def bootstrap_test_common(compute_fn, orig, pert, base, n_bootstrap=1000, seed=42):
+def bootstrap_test_common(compute_fn, orig, pert, base, n_bootstrap=1000, seed=42,
+                          alternative='two-sided'):
     """Bootstrap percentile test comparing compute_fn(orig,pert) vs compute_fn(orig,base).
 
-    Two-tailed test with fixed random seed. P-value = proportion of bootstrap
-    resamples where the difference falls on the opposite side of zero from the
-    observed difference, doubled for two-tailed test.
+    Args:
+        compute_fn: scalar metric function f(x, y).
+        orig, pert, base: aligned vectors.
+        n_bootstrap: number of bootstrap resamples.
+        seed: RNG seed.
+        alternative: one of 'two-sided', 'greater', 'less'.
+            'two-sided' (default): H1 pert != base; p = 2 * Pr(opposite-sign).
+            'greater': H1 pert > base; p = Pr(diffs <= 0).
+            'less':    H1 pert < base; p = Pr(diffs >= 0).
     """
+    if alternative not in ('two-sided', 'greater', 'less'):
+        raise ValueError(f"alternative must be 'two-sided'|'greater'|'less', got {alternative!r}")
+
     rng = np.random.default_rng(seed)
     orig = np.asarray(orig)
     pert = np.asarray(pert)
@@ -62,11 +72,16 @@ def bootstrap_test_common(compute_fn, orig, pert, base, n_bootstrap=1000, seed=4
     ci_low = np.percentile(diffs, 2.5)
     ci_high = np.percentile(diffs, 97.5)
 
-    if observed_diff >= 0:
-        p_value = 2 * np.mean(diffs <= 0)
-    else:
-        p_value = 2 * np.mean(diffs >= 0)
-    p_value = min(p_value, 1.0)
+    if alternative == 'two-sided':
+        if observed_diff >= 0:
+            p_value = 2 * np.mean(diffs <= 0)
+        else:
+            p_value = 2 * np.mean(diffs >= 0)
+        p_value = min(p_value, 1.0)
+    elif alternative == 'greater':
+        p_value = float(np.mean(diffs <= 0))
+    else:  # 'less'
+        p_value = float(np.mean(diffs >= 0))
 
     return {
         "statistic_perturbation": observed_pert,

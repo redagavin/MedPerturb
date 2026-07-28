@@ -15,6 +15,7 @@
 
 MODEL=${1:-"meta-llama/Llama-3.1-8B-Instruct"}
 BATCH_SIZE=${2:-4}
+TEMPERATURE=${3:-0.7}
 MEDPERTURB_DIR="${SLURM_SUBMIT_DIR}"
 
 source ~/.bashrc
@@ -24,7 +25,7 @@ mkdir -p results checkpoints/main_experiment_sc logs
 
 echo "========================================"
 echo "SC Eval: Array task ${SLURM_ARRAY_TASK_ID} of ${SLURM_ARRAY_TASK_COUNT}"
-echo "Model: ${MODEL}"
+echo "Model: ${MODEL}, Temperature: ${TEMPERATURE}"
 echo "Node: $(hostname)"
 echo "Start: $(date)"
 echo "========================================"
@@ -36,6 +37,7 @@ python code/main_evaluate_sc.py \
     --checkpoint_dir checkpoints/main_experiment_sc \
     --n_samples 10 \
     --batch_size ${BATCH_SIZE} \
+    --temperature ${TEMPERATURE} \
     --max_new_tokens 512 \
     --rng_seed 42
 

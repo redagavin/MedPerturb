@@ -1,5 +1,5 @@
 # ABOUTME: Self-consistency evaluation orchestrator with batched inference
-# ABOUTME: Runs 10 i.i.d. samples per (case, condition, task) at T=0.7
+# ABOUTME: Runs N i.i.d. samples per (case, condition, task) at configurable temperature
 
 import argparse
 import json
@@ -63,7 +63,8 @@ def setup_batched_tokenizer(tokenizer):
 
 
 @torch.no_grad()
-def batched_sample(model, tokenizer, prompts, n_samples=10, max_new_tokens=512):
+def batched_sample(model, tokenizer, prompts, n_samples=10, max_new_tokens=512,
+                    temperature=0.7):
     """Batched generation: multiple prompts x n_samples per generate() call.
 
     Args:
@@ -116,7 +117,7 @@ def batched_sample(model, tokenizer, prompts, n_samples=10, max_new_tokens=512):
     gen_config = copy.deepcopy(model.generation_config)
     gen_config.update(
         do_sample=True,
-        temperature=0.7,
+        temperature=temperature,
         max_new_tokens=max_new_tokens,
         pad_token_id=tokenizer.pad_token_id,
     )
@@ -155,7 +156,8 @@ def atomic_write_json(data, path):
 SC_EXPECTED_KEYS = frozenset(f'{p}_{t}' for p in SC_CONDITIONS for t in SC_TASKS)
 
 
-def evaluate_case_sc(evaluator, case_row, n_samples, batch_size, max_new_tokens):
+def evaluate_case_sc(evaluator, case_row, n_samples, batch_size, max_new_tokens,
+                     temperature=0.7):
     """Run SC evaluation for one case across all conditions and tasks.
 
     Returns dict with 15 keys (one per condition_task), each containing
@@ -182,6 +184,7 @@ def evaluate_case_sc(evaluator, case_row, n_samples, batch_size, max_new_tokens)
             decoded = batched_sample(
                 evaluator.model, evaluator.tokenizer,
                 batch_contents, n_samples=1, max_new_tokens=max_new_tokens,
+                temperature=temperature,
             )
             for i, one_sample in enumerate(decoded):
                 per_prompt_samples[i].append(one_sample[0])
@@ -211,6 +214,7 @@ def parse_args():
     parser.add_argument('--n_samples', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=4)
     parser.add_argument('--max_new_tokens', type=int, default=512)
+    parser.add_argument('--temperature', type=float, default=0.7)
     parser.add_argument('--rng_seed', type=int, default=42)
     parser.add_argument('--gpu_id', type=int, default=None)
     parser.add_argument('--total_gpus', type=int, default=1)
@@ -218,9 +222,11 @@ def parse_args():
     return parser.parse_args()
 
 
-def _shard_paths(output_dir, checkpoint_dir, model_short, gpu_id, total_gpus):
+def _shard_paths(output_dir, checkpoint_dir, model_short, gpu_id, total_gpus,
+                  temperature=0.7):
     """Build per-shard output/checkpoint paths."""
-    tag = f"{model_short}_gpu{gpu_id}_of_{total_gpus}"
+    temp_suffix = f"_t{temperature:.1f}" if temperature != 0.7 else ""
+    tag = f"{model_short}{temp_suffix}_gpu{gpu_id}_of_{total_gpus}"
     return (
         os.path.join(output_dir, f"main_evaluation_sc_{tag}.json"),
         os.path.join(checkpoint_dir, f"partial_sc_{tag}.json"),
@@ -246,6 +252,7 @@ def main():
     out_path, ckpt_path = _shard_paths(
         args.output_dir, args.checkpoint_dir,
         model_short, args.gpu_id, args.total_gpus,
+        temperature=args.temperature,
     )
 
     torch.manual_seed(args.rng_seed + args.gpu_id)
@@ -296,19 +303,21 @@ def main():
                 n_samples=args.n_samples,
                 batch_size=args.batch_size,
                 max_new_tokens=args.max_new_tokens,
+                temperature=args.temperature,
             )
         except Exception as e:
             print(f"ERROR on case {cid}: {e}", file=sys.stderr)
             case_result = {'error': str(e)}
         case_result['context_id'] = cid
         case_result['rng_seed'] = args.rng_seed
+        case_result['temperature'] = args.temperature
         results.append(case_result)
         atomic_write_json(results, ckpt_path)
 
     atomic_write_json(results, out_path)
     n_errors = sum(1 for r in results if 'error' in r)
     print(
-        f"Wrote {len(results)} cases to {args.output}"
+        f"Wrote {len(results)} cases to {out_path}"
         + (f" ({n_errors} with errors)" if n_errors else "")
     )
 
